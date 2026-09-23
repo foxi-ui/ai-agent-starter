@@ -39,11 +39,44 @@ pnpm install
 | `DEEPSEEK_BASE_URL` | ❌ | `https://api.deepseek.com` | API 基地址 |
 | `AI_CHAT_MODEL` | ❌ | `deepseek-flash` | 模型名 |
 
+密钥只经环境变量注入，**不写入代码**（见 `src/cli/config.ts`）。
+
+有三种注入方式，任选其一：
+
+**方式 1：env 文件（推荐）**
+
+`pnpm start` / `pnpm test` 已内置以下加载顺序：
+
+```text
+--env-file-if-exists=.env          # 模板，仅占位符，随仓库提交
+--env-file-if-exists=.env.local    # 本地真实值，已被 .gitignore 忽略
+```
+
+复制模板并填入真实密钥：
+
+```bash
+cp .env .env.local
+# 编辑 .env.local，把 <your_deepseek_api_key> 换成真实密钥
+```
+
+规则：
+
+- **靠后的文件优先**，所以 `.env.local` 覆盖 `.env`（Node 的多 `--env-file` 行为）。
+- **显式环境变量优先级最高**：`DEEPSEEK_API_KEY=你的key pnpm start` 会覆盖两个文件。
+- `.env.local` 不存在时**静默跳过**，不会报错。
+- **`.env.local` 已被 `.gitignore` 忽略**，真实密钥不会被提交。
+
+**方式 2：直接导出**
+
 ```bash
 export DEEPSEEK_API_KEY=你的key
 ```
 
-密钥只经环境变量注入，**不写入代码**（见 `src/cli/config.ts`）。
+**方式 3：单次内联**
+
+```bash
+DEEPSEEK_API_KEY=你的key pnpm start
+```
 
 ### 3. 运行
 
@@ -75,6 +108,8 @@ AI: ...
 ai-chat/
   package.json          # type: module；scripts: start / test / typecheck
   tsconfig.json         # strict；noEmit；module: nodenext；@/ 路径别名
+  .env                  # 环境变量模板（仅占位符，随仓库提交）
+  .env.local            # 本地真实值（被 .gitignore 忽略，不入库）
   loader.mjs            # 注册 @/ 别名钩子（Node 运行时用）
   loader-hooks.mjs      # @/ → src/ 的 resolve 实现
   src/

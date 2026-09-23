@@ -171,3 +171,31 @@ TypeScript 对**值导入**的 `.ts` 扩展名会直接报 `TS5097`。
 该选项要求 `noEmit`（或 `emitDeclarationOnly`），本项目已是 `noEmit: true`，无冲突。
 
 **代价**：几乎没有——项目本就不产出 JS，由 Node 直接运行 `.ts`。
+
+---
+
+## D12. 用 `--env-file-if-exists` 加载 env 文件
+
+**决策**：`start` / `test` 脚本前置两个 `--env-file-if-exists`，依次加载 `.env`（模板，入库）
+与 `.env.local`（真实值，已 gitignore）。
+
+**理由**
+
+- Node **不会自动加载 `.env`**。没有这个标志时，放在 `.env.local` 里的密钥完全不生效，
+  `pnpm start` 会直接以「缺少 DEEPSEEK_API_KEY」退出——用户很容易误以为配置文件已生效。
+- 用 `-if-exists` 而不是 `--env-file`：文件缺失时静默跳过而非报错，
+  新克隆的仓库无需先建文件就能跑起来。
+- 分离两个文件符合「模板入库、真实值不入库」的惯例：
+  `.env` 只含占位符，可安全提交；`.env.local` 存真实密钥，已在 `.gitignore` 中。
+
+**已验证的行为**
+
+| 行为 | 结果 |
+| --- | --- |
+| 多个 `--env-file` 的优先级 | **靠后的文件覆盖靠前的**，故 `.env.local` 覆盖 `.env` |
+| 显式环境变量 vs 文件 | **显式环境变量优先**，故 `DEEPSEEK_API_KEY=k pnpm start` 仍覆盖两个文件 |
+| 文件不存在 | 打印一行提示后继续，退出码 0 |
+
+**代价**：脚本变长；`test` 也会加载 env 文件。后者对本项目无实际影响——所有测试
+都用注入的替身，不读 `process.env`，因此不依赖这两个文件。保留它是为了
+`start` 与 `test` 行为一致。

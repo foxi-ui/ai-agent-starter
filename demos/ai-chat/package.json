@@ -4,8 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "node --import ./loader.mjs src/index.ts",
-    "test": "node --import ./loader.mjs --test",
+    "start": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import ./loader.mjs src/index.ts",
+    "test": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import ./loader.mjs --test",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
