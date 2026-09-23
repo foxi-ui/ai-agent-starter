@@ -1,0 +1,1135 @@
+<title>模型不记得你</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+
+<style>
+  /* ── 设计令牌：先在裸 :root 定义完整浅色，再让深色覆写 ── */
+  :root {
+    --ground:      #F4F5F7;
+    --surface:     #FFFFFF;
+    --surface-sunk:#EDEFF3;
+    --ink:         #191C22;
+    --ink-soft:    #5B6270;
+    --ink-faint:   #8A92A0;
+    --line:        #DCE0E7;
+    --line-strong: #C2C8D2;
+
+    /* 中性：system 永远「现加」，所以刻意用无色相 */
+    --system:      #707A8A;
+    --system-bg:   #E7EAEF;
+
+    /* 靛蓝：属于第 1 轮的消息 */
+    --turn1:       #3D50B4;
+    --turn1-bg:    #E7EAFB;
+
+    /* 琥珀：属于第 2 轮新增的消息 */
+    --turn2:       #96590A;
+    --turn2-bg:    #FBEFDC;
+
+    --accent:      #3D50B4;
+    --warn:        #A63B3B;
+    --warn-bg:     #FAEBEB;
+    --shadow:      0 1px 2px rgba(20, 24, 33, .06), 0 4px 12px rgba(20, 24, 33, .05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground:      #11141A;
+      --surface:     #191D25;
+      --surface-sunk:#151920;
+      --ink:         #E7EAF0;
+      --ink-soft:    #9BA3B2;
+      --ink-faint:   #737C8C;
+      --line:        #2B313C;
+      --line-strong: #3C4350;
+
+      --system:      #98A1B0;
+      --system-bg:   #232833;
+
+      --turn1:       #93A2F0;
+      --turn1-bg:    #1F2540;
+
+      --turn2:       #E2AB5E;
+      --turn2-bg:    #33260F;
+
+      --accent:      #93A2F0;
+      --warn:        #E89393;
+      --warn-bg:     #35201F;
+      --shadow:      0 1px 2px rgba(0, 0, 0, .4), 0 4px 14px rgba(0, 0, 0, .3);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground:      #11141A;
+    --surface:     #191D25;
+    --surface-sunk:#151920;
+    --ink:         #E7EAF0;
+    --ink-soft:    #9BA3B2;
+    --ink-faint:   #737C8C;
+    --line:        #2B313C;
+    --line-strong: #3C4350;
+
+    --system:      #98A1B0;
+    --system-bg:   #232833;
+
+    --turn1:       #93A2F0;
+    --turn1-bg:    #1F2540;
+
+    --turn2:       #E2AB5E;
+    --turn2-bg:    #33260F;
+
+    --accent:      #93A2F0;
+    --warn:        #E89393;
+    --warn-bg:     #35201F;
+    --shadow:      0 1px 2px rgba(0, 0, 0, .4), 0 4px 14px rgba(0, 0, 0, .3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'Noto Sans SC', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-size: 16px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 940px;
+    margin: 0 auto;
+    padding-block: 56px 96px;
+    padding-inline: 20px;
+  }
+
+  .prose { max-width: 65ch; }
+
+  h1, h2, h3 {
+    font-family: 'Bricolage Grotesque', 'Noto Sans SC', system-ui, sans-serif;
+    text-wrap: balance;
+    line-height: 1.25;
+    margin: 0;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 5.5vw, 3.1rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin-bottom: 18px;
+  }
+
+  h2 {
+    font-size: clamp(1.3rem, 3vw, 1.6rem);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 14px;
+  }
+
+  h3 {
+    font-size: 1.02rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  p { margin: 0 0 16px; }
+
+  .lede {
+    font-size: 1.12rem;
+    color: var(--ink-soft);
+    max-width: 60ch;
+  }
+
+  section {
+    margin-top: 64px;
+    padding-top: 40px;
+    border-top: 1px solid var(--line);
+  }
+
+  section:first-of-type { border-top: 0; padding-top: 0; margin-top: 48px; }
+
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 10px;
+  }
+
+  code {
+    font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 0.88em;
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+
+  strong { font-weight: 700; }
+
+  .hl { color: var(--accent); font-weight: 700; }
+
+  /* ── 结论卡片：整页的题眼 ── */
+  .thesis {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 20px 24px;
+    margin-top: 28px;
+    box-shadow: var(--shadow);
+  }
+  .thesis p:last-child { margin-bottom: 0; }
+
+  /* ── 图表容器 ── */
+  figure {
+    margin: 30px 0 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 24px 20px 16px;
+    box-shadow: var(--shadow);
+  }
+
+  figure svg { display: block; width: 100%; height: auto; max-width: 100%; }
+
+  figcaption {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--line);
+    font-size: 0.86rem;
+    color: var(--ink-soft);
+    line-height: 1.6;
+  }
+
+  /* ── 流水线步骤 ── */
+  .flow { display: flex; flex-direction: column; gap: 0; margin-top: 6px; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 14px;
+    align-items: start;
+    padding: 13px 0;
+  }
+
+  .step + .step { border-top: 1px solid var(--line); }
+
+  .step-n {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--ink-faint);
+    padding-top: 3px;
+  }
+
+  .step-what { font-weight: 500; }
+  .step-code {
+    display: block;
+    margin-top: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    overflow-x: auto;
+  }
+  .step-where {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--ink-faint);
+    letter-spacing: 0.03em;
+  }
+
+  /* ── 消息单元（核心可视化） ── */
+  .arr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    align-items: stretch;
+  }
+
+  .msg {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border: 1px solid;
+    border-radius: 7px;
+    padding: 5px 9px 6px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    min-width: 0;
+  }
+
+  .msg-role {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.61rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+
+  .msg-body { font-family: 'Noto Sans SC', sans-serif; }
+
+  .msg--system {
+    border-color: var(--line-strong);
+    border-style: dashed;
+    background: var(--system-bg);
+    color: var(--system);
+  }
+
+  .msg--turn1 {
+    border-color: var(--turn1);
+    background: var(--turn1-bg);
+    color: var(--turn1);
+  }
+
+  .msg--turn2 {
+    border-color: var(--turn2);
+    background: var(--turn2-bg);
+    color: var(--turn2);
+  }
+
+  /* ── 轮次抽屉 ── */
+  .turn {
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .turn-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+    padding: 9px 14px;
+    background: var(--surface-sunk);
+    border-bottom: 1px solid var(--line);
+    font-size: 0.8rem;
+  }
+
+  .turn-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 0.76rem;
+    letter-spacing: 0.03em;
+  }
+
+  .turn-note { color: var(--ink-faint); font-size: 0.76rem; }
+
+  .turn-body { padding: 14px; }
+
+  .between {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 4px;
+    color: var(--ink-faint);
+    font-size: 0.79rem;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .between::before {
+    content: "";
+    width: 2px;
+    height: 16px;
+    background: var(--line-strong);
+    flex: none;
+    margin-left: 10px;
+  }
+
+  /* ── 标注 ── */
+  .bracket {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--line);
+    font-size: 0.79rem;
+    color: var(--ink-soft);
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid;
+  }
+
+  .tag--re { border-color: var(--turn1); color: var(--turn1); background: var(--turn1-bg); }
+  .tag--new { border-color: var(--turn2); color: var(--turn2); background: var(--turn2-bg); }
+  .tag--sys { border-color: var(--line-strong); color: var(--system); background: var(--system-bg); border-style: dashed; }
+
+  /* ── 三个困惑 ── */
+  .qa {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-top: 26px;
+  }
+
+  .qa-item {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 16px 18px;
+  }
+
+  .qa-q {
+    font-family: 'Bricolage Grotesque', 'Noto Sans SC', sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin-bottom: 6px;
+  }
+
+  .qa-a { font-size: 0.88rem; color: var(--ink-soft); margin: 0; }
+  .qa-a code { font-size: 0.82em; }
+
+  /* ── 文件表 ── */
+  .files {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 22px;
+    font-size: 0.85rem;
+  }
+
+  .files th, .files td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+
+  .files th {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+
+  .files td:first-child {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    white-space: nowrap;
+    color: var(--accent);
+  }
+
+  .scroll-x { overflow-x: auto; }
+
+  /* ── 关联知识：两种写法的对比 ── */
+  .modes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+
+  .mode {
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 15px 17px;
+    background: var(--surface);
+  }
+
+  .mode--ok  { border-left: 3px solid var(--accent); }
+  .mode--bad { border-left: 3px solid var(--warn); }
+
+  .mode-head {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 7px;
+  }
+
+  .mode--ok  .mode-head { color: var(--accent); }
+  .mode--bad .mode-head { color: var(--warn); }
+
+  .mode-body { font-size: 0.86rem; color: var(--ink-soft); margin: 0; }
+  .mode-body code { font-size: 0.82em; }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--line);
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+  }
+
+  .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+
+  .swatch { width: 22px; height: 10px; border-radius: 3px; flex: none; }
+  .swatch--ok  { background: var(--accent); }
+  .swatch--bad { background: var(--warn); }
+
+  .h3-block { margin-top: 40px; }
+
+  a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  .runbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 15px;
+    padding: 11px 15px;
+    border-radius: 8px;
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.81rem;
+    overflow-x: auto;
+  }
+
+  .runbox .prompt { color: var(--accent); font-weight: 600; flex: none; }
+  .runbox .cmd { white-space: nowrap; color: var(--ink); }
+
+  pre.code {
+    margin: 16px 0 0;
+    padding: 16px 18px;
+    border-radius: 9px;
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.77rem;
+    line-height: 1.7;
+    color: var(--ink-soft);
+    tab-size: 2;
+  }
+
+  /* 全局 code 样式带背景/边框/nowrap，会撑坏多行代码块 —— 这里必须重置 */
+  pre.code code {
+    background: none;
+    border: 0;
+    padding: 0;
+    white-space: pre;
+    font-size: inherit;
+    color: inherit;
+  }
+
+  pre.code .hi { color: var(--ink); font-weight: 600; }
+  pre.code .ok { color: var(--accent); }
+  pre.code .bad { color: var(--warn); }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+  }
+
+  @media (max-width: 520px) {
+    .wrap { padding-block: 36px 64px; }
+    section { margin-top: 48px; padding-top: 32px; }
+    figure { padding: 18px 14px 14px; }
+    .step-code { white-space: normal; word-break: break-all; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">ai-chat · 多轮对话是怎么工作的</div>
+    <h1>模型不记得你</h1>
+    <p class="lede">
+      看代码之前，先接受一个反直觉的事实：DeepSeek 的接口不保存任何东西。
+      你问第二句话时，它并不知道你第一句问过什么。
+    </p>
+
+    <div class="thesis">
+      <p>
+        所谓「多轮对话」，是你的程序<strong>每次把之前说过的所有话，连同新问题一起重发一遍</strong>。
+      </p>
+      <p>
+        所以「上下文管理」不是什么黑魔法 —— 它就是维护一个数组。
+        整个 <code>src/</code> 里所有的代码，都在为这一个数组服务。
+      </p>
+    </div>
+  </header>
+
+  <!-- ─────────── 1. 无状态 ─────────── -->
+  <section>
+    <div class="eyebrow">第一步</div>
+    <h2>API 是无状态的</h2>
+    <p class="prose">
+      你的程序问两次，就是两次<strong>互不相干</strong>的 HTTP 请求。
+      服务端每次都「第一次见到你」，收到什么就答什么，答完就忘。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 700 300" role="img" aria-label="两次独立的请求：你的程序每次发送完整消息数组，服务端每次只回这一条回答，不保存任何东西">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- 左：你的程序 -->
+        <rect x="18" y="70" width="170" height="160" rx="9" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.55"/>
+        <text x="103" y="100" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">你的程序</text>
+        <text x="103" y="122" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">一直在运行</text>
+        <text x="103" y="146" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">记着那个数组</text>
+        <rect x="38" y="164" width="130" height="46" rx="6" fill="currentColor" opacity="0.08"/>
+        <text x="103" y="192" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">messages[]</text>
+
+        <!-- 右：服务端 -->
+        <rect x="470" y="70" width="212" height="160" rx="9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.55"/>
+        <text x="576" y="100" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">DeepSeek API</text>
+        <text x="576" y="124" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">每次请求独立处理</text>
+        <text x="576" y="148" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">用完即忘</text>
+        <rect x="496" y="168" width="160" height="40" rx="6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.5"/>
+        <text x="576" y="193" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.6">这里什么都没有</text>
+
+        <!-- 请求 1 -->
+        <line x1="196" y1="112" x2="462" y2="112" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah)"/>
+        <text x="329" y="104" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor" opacity="0.85">① 完整数组</text>
+
+        <!-- 响应 1 -->
+        <line x1="462" y1="142" x2="196" y2="142" stroke="currentColor" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+        <text x="329" y="160" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor" opacity="0.85">② 只回这一条</text>
+
+        <!-- 请求 2 -->
+        <line x1="196" y1="205" x2="462" y2="205" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah)"/>
+        <text x="329" y="197" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor" opacity="0.85">③ 又是完整数组</text>
+
+        <!-- 响应 2 -->
+        <line x1="462" y1="235" x2="196" y2="235" stroke="currentColor" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+        <text x="329" y="253" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor" opacity="0.85">④ 又只回这一条</text>
+
+        <!-- 关键提示 -->
+        <text x="350" y="285" text-anchor="middle" font-size="11.5" fill="currentColor" opacity="0.65">② 和 ④ 之间，服务端没有保留任何东西 —— 全靠 ③ 重新喂给它</text>
+      </svg>
+      <figcaption>
+        两次请求之间没有任何关联。模型之所以看起来「记得」，
+        唯一的原因是 <strong>③ 里面包含了 ① 的全部内容</strong>。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ─────────── 2. 一轮流水线 ─────────── -->
+  <section>
+    <div class="eyebrow">第二步</div>
+    <h2>一轮对话，代码做了什么</h2>
+    <p class="prose">
+      循环里只有 6 个动作。左边是发生的事，下面灰色的是对应代码。
+      注意第 4 步 —— 那一次 <code>fetch</code> 就是全部的「网络魔法」。
+    </p>
+
+    <figure>
+      <div class="flow">
+        <div class="step">
+          <div class="step-n">01</div>
+          <div>
+            <div class="step-what">读到你敲的一行</div>
+            <span class="step-code">for await (const line of rl)</span>
+            <span class="step-where">src/cli/repl.ts</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">02</div>
+          <div>
+            <div class="step-what">把这句存进数组</div>
+            <span class="step-code">session.append('user', question)</span>
+            <span class="step-where">src/cli/repl.ts → src/core/session.ts</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">03</div>
+          <div>
+            <div class="step-what">拼出「要发出去的完整数组」</div>
+            <span class="step-code">session.toMessages(SYSTEM_PROMPT)</span>
+            <span class="step-where">src/core/session.ts</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">04</div>
+          <div>
+            <div class="step-what">发 HTTP 请求，拿回回答</div>
+            <span class="step-code">await fetch(url, { body: { model, messages } })</span>
+            <span class="step-where">src/llm/deepseek.ts</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">05</div>
+          <div>
+            <div class="step-what">把回答也存进数组</div>
+            <span class="step-code">session.append('assistant', result.content)</span>
+            <span class="step-where">src/cli/repl.ts</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">06</div>
+          <div>
+            <div class="step-what">打印出来，回到 01</div>
+            <span class="step-code">write(result.content)</span>
+            <span class="step-where">src/cli/repl.ts</span>
+          </div>
+        </div>
+      </div>
+      <figcaption>
+        第 02 和 05 步是「记忆」的全部来源 —— 两次 <code>append</code>。
+        数组在 <code>Session</code> 里，只活在内存中，程序退出就没了。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ─────────── 3. 核心：两轮对比 ─────────── -->
+  <section>
+    <div class="eyebrow">第三步 · 关键</div>
+    <h2>两轮对比：数组是怎么变长的</h2>
+    <p class="prose">
+      这是全部的重点。下面把<strong>真实发给 API 的数组</strong>画出来。
+      颜色表示这条消息是哪一轮进来的：
+      <span class="tag tag--sys">system</span>
+      <span class="tag tag--re">第 1 轮就有</span>
+      <span class="tag tag--new">这一轮新增</span>
+    </p>
+
+    <div class="turn">
+      <div class="turn-head">
+        <span class="turn-title">第 1 轮</span>
+        <span class="turn-note">用户输入：什么是 React Server Components？</span>
+      </div>
+      <div class="turn-body">
+        <div class="arr">
+          <div class="msg msg--system">
+            <span class="msg-role">system</span>
+            <span class="msg-body">你是 CLI AI 助手…</span>
+          </div>
+          <div class="msg msg--turn1">
+            <span class="msg-role">user</span>
+            <span class="msg-body">什么是 React Server Components？</span>
+          </div>
+        </div>
+        <div class="bracket">
+          <span class="tag tag--sys">system 每次现加</span>
+          <span class="tag tag--re">数组里只有 1 条</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="between">↓ 收到回答 A，追加进数组</div>
+
+    <div class="turn">
+      <div class="turn-head">
+        <span class="turn-title">会话数组此时</span>
+        <span class="turn-note">注意 system 不在里面</span>
+      </div>
+      <div class="turn-body">
+        <div class="arr">
+          <div class="msg msg--turn1">
+            <span class="msg-role">user</span>
+            <span class="msg-body">什么是 React Server Components？</span>
+          </div>
+          <div class="msg msg--turn1">
+            <span class="msg-role">assistant</span>
+            <span class="msg-body">回答 A</span>
+          </div>
+        </div>
+        <div class="bracket">
+          <span class="tag tag--re">2 条，都是第 1 轮的</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="between">↓ 用户又问：总结刚才内容</div>
+
+    <div class="turn">
+      <div class="turn-head">
+        <span class="turn-title">第 2 轮</span>
+        <span class="turn-note">完整发给 API 的内容</span>
+      </div>
+      <div class="turn-body">
+        <div class="arr">
+          <div class="msg msg--system">
+            <span class="msg-role">system</span>
+            <span class="msg-body">你是 CLI AI 助手…</span>
+          </div>
+          <div class="msg msg--turn1">
+            <span class="msg-role">user</span>
+            <span class="msg-body">什么是 React Server Components？</span>
+          </div>
+          <div class="msg msg--turn1">
+            <span class="msg-role">assistant</span>
+            <span class="msg-body">回答 A</span>
+          </div>
+          <div class="msg msg--turn2">
+            <span class="msg-role">user</span>
+            <span class="msg-body">总结刚才内容</span>
+          </div>
+        </div>
+        <div class="bracket">
+          <span class="tag tag--sys">system 又是现加的</span>
+          <span class="tag tag--re">第 1 轮的 2 条原样重发</span>
+          <span class="tag tag--new">新增 1 条</span>
+        </div>
+      </div>
+    </div>
+
+    <figure>
+      <figcaption style="margin-top:0; padding-top:0; border-top:0;">
+        模型能「总结刚才内容」，不是因为它记得 —— 而是因为
+        <strong>靛蓝色的那两条被原封不动地又发了一遍</strong>，
+        它这一轮才第一次「看到」上一轮发生了什么。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ─────────── 4. 三个困惑 ─────────── -->
+  <section>
+    <div class="eyebrow">第四步</div>
+    <h2>代码里三个容易卡住的地方</h2>
+
+    <div class="qa">
+      <div class="qa-item">
+        <div class="qa-q">system 为什么不在数组里？</div>
+        <p class="qa-a">
+          因为它不是「说过的话」，而是每次请求都要重新附上的固定指令。
+          所以它存在常量里，由 <code>toMessages()</code> 在组装时插到最前面。
+          这样改助手人设不用重建会话。
+        </p>
+      </div>
+      <div class="qa-item">
+        <div class="qa-q">请求失败时会怎样？</div>
+        <p class="qa-a">
+          <strong>不往数组里加 assistant。</strong>
+          否则历史里会出现一条「伪造的回答」，下一轮模型会把它当成自己说过的话。
+          失败的 <code>user</code> 会留着 —— 用户确实说过那句。
+        </p>
+      </div>
+      <div class="qa-item">
+        <div class="qa-q">reasoning_content 呢？</div>
+        <p class="qa-a">
+          那是模型的思考过程。代码只用 <code>content</code>，
+          <code>reasoning_content</code> 既不打印、也不进数组 ——
+          否则会白白占掉后续请求的 token。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── 5. 代码在哪 ─────────── -->
+  <section>
+    <div class="eyebrow">对照</div>
+    <h2>每段代码负责哪一步</h2>
+
+    <div class="scroll-x">
+      <table class="files">
+        <thead>
+          <tr><th>文件</th><th>负责什么</th><th>在上面哪一步</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>src/core/types.ts</td>
+            <td>定义 <code>Message</code> 长什么样 —— 整个项目的契约</td>
+            <td>数组里每个元素的形状</td>
+          </tr>
+          <tr>
+            <td>src/core/session.ts</td>
+            <td>维持那个数组：<code>append</code> 存、<code>toMessages</code> 取</td>
+            <td>02 / 03 / 05</td>
+          </tr>
+          <tr>
+            <td>src/llm/client.ts</td>
+            <td>只定义接口，规定「给一组消息，还一个回答」</td>
+            <td>让 04 可以被替换成假的</td>
+          </tr>
+          <tr>
+            <td>src/llm/deepseek.ts</td>
+            <td>真正发 HTTP 请求、解析响应</td>
+            <td>04</td>
+          </tr>
+          <tr>
+            <td>src/cli/repl.ts</td>
+            <td>读一行、存一句、循环；打印和报错也在这</td>
+            <td>01 / 02 / 05 / 06</td>
+          </tr>
+          <tr>
+            <td>src/index.ts</td>
+            <td>读环境变量、组装、启动</td>
+            <td>循环开始之前</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="prose" style="margin-top:26px;">
+      记住一句话就够了：
+      <strong>除了 <code>Session</code> 里那个数组，没有任何东西在「记住」对话</strong>。
+      其余所有文件，都只是在为这个数组的存取和运输服务。
+    </p>
+  </section>
+
+  <!-- ─────────── 6. 关联知识 ─────────── -->
+  <section>
+    <div class="eyebrow">关联知识</div>
+    <h2><code>createInterface</code> 并不触发请求</h2>
+    <p class="prose">
+      第 01 步用的是 <code>createInterface</code>，很容易以为「是它去调了模型」。
+      其实它不知道模型的存在 —— 它连 HTTP 都不认识。
+    </p>
+    <p class="prose">
+      它只做一件事：<strong>把 stdin 上的字节流，切成一行一行的字符串。</strong>
+      真正把「一行输入」变成「一次 HTTP 请求」的，是紧接着的那个
+      <code>for await</code> 循环。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 810 200" role="img" aria-label="数据流示意：输入侧由 stdin 与 createInterface 组成，与模型无关；分界线之后是请求侧，for await 拉出一行，再由 client.chat 发出 HTTP 请求">
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <text x="239" y="42" text-anchor="middle" font-size="11.5" font-weight="700" fill="currentColor" opacity="0.75">输入侧 · 与模型完全无关</text>
+        <text x="642" y="42" text-anchor="middle" font-size="11.5" font-weight="700" fill="currentColor" opacity="0.75">请求侧 · 请求从这里出发</text>
+
+        <rect x="16" y="62" width="132" height="66" rx="8" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+        <text x="82" y="90" text-anchor="middle" font-size="11.5" font-family="monospace" fill="currentColor" opacity="0.85">stdin</text>
+        <text x="82" y="108" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.55">字节流</text>
+
+        <line x1="152" y1="95" x2="164" y2="95" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah2)" opacity="0.6"/>
+
+        <rect x="168" y="62" width="140" height="66" rx="8" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+        <text x="238" y="90" text-anchor="middle" font-size="10.5" font-family="monospace" fill="currentColor" opacity="0.85">createInterface</text>
+        <text x="238" y="108" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.55">缓存 + 按换行切分</text>
+
+        <line x1="312" y1="95" x2="324" y2="95" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah2)" opacity="0.6"/>
+
+        <rect x="328" y="62" width="134" height="66" rx="8" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+        <text x="395" y="90" text-anchor="middle" font-size="11.5" fill="currentColor" opacity="0.85">一行字符串</text>
+        <text x="395" y="108" text-anchor="middle" font-size="10.5" font-family="monospace" fill="currentColor" opacity="0.55">"什么是 RSC？"</text>
+
+        <line x1="484" y1="52" x2="484" y2="142" stroke="currentColor" stroke-width="1.6" stroke-dasharray="5 4" opacity="0.85"/>
+
+        <rect x="502" y="62" width="132" height="66" rx="8" fill="none" stroke="currentColor" stroke-width="1.9" opacity="0.9"/>
+        <text x="568" y="90" text-anchor="middle" font-size="11" font-family="monospace" font-weight="600" fill="currentColor">for await</text>
+        <text x="568" y="108" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.65">拉出一行</text>
+
+        <line x1="638" y1="95" x2="650" y2="95" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah2)" opacity="0.6"/>
+
+        <rect x="654" y="62" width="140" height="66" rx="8" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+        <text x="724" y="90" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor" opacity="0.85">client.chat()</text>
+        <text x="724" y="108" text-anchor="middle" font-size="10.5" font-family="monospace" fill="currentColor" opacity="0.55">→ fetch → HTTP</text>
+
+        <text x="484" y="168" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" opacity="0.85">★ 分界线</text>
+        <text x="484" y="186" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.6">for await 把「输入」变成「请求」</text>
+      </svg>
+      <figcaption>
+        创建 <code>rl</code> 只是装好了「切行」这套装置，它本身不会发出任何请求。
+        分界线左边的每一步都只是把字节整理成字符串。
+      </figcaption>
+    </figure>
+
+    <h3 class="h3-block">它为什么要「先缓存」</h3>
+    <p class="prose">
+      终端来的字节<strong>是可能被切开的</strong>。你敲「你好⏎」时，底层可能先给
+      <code>"你"</code>，再给 <code>"好\n"</code>。
+      readline 负责把这种半行拼回去 —— 这正是它存在的理由。
+    </p>
+
+    <h3 class="h3-block">为什么必须是 <code>for await</code></h3>
+    <p class="prose">
+      <code>rl</code> 同时是两种东西：一个 EventEmitter（所以
+      <code>rl.on('line')</code> 能用），也是一个 AsyncIterable（所以
+      <code>for await</code> 能用）。两种写法都能拿到行，但
+      <strong>触发时机完全不同</strong>。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 800 350" role="img" aria-label="时间线对比：for await 的三个请求依次在 1 毫秒、302 毫秒、504 毫秒出发，总跨度 604 毫秒；rl.on 的三个请求都在 0 毫秒附近同时出发，总跨度 302 毫秒">
+        <!-- 面板 A -->
+        <text x="110" y="24" font-size="11.5" font-weight="700" fill="currentColor" opacity="0.85">for await · 串行</text>
+        <text x="330" y="24" font-size="11" fill="currentColor" opacity="0.55">总跨度 604ms = 三个请求之和</text>
+
+        <text x="100" y="63" text-anchor="end" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7">一</text>
+        <text x="100" y="93" text-anchor="end" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7">二</text>
+        <text x="100" y="123" text-anchor="end" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7">三</text>
+
+        <rect x="111.0" y="48" width="296.3" height="22" rx="4" fill="currentColor" opacity="0.75"/>
+        <rect x="407.3" y="78" width="198.9" height="22" rx="4" fill="currentColor" opacity="0.75"/>
+        <rect x="606.2" y="108" width="98.5" height="22" rx="4" fill="currentColor" opacity="0.75"/>
+
+        <text x="415" y="63" font-size="10" font-family="monospace" fill="currentColor" opacity="0.6">300ms</text>
+        <text x="614" y="93" font-size="10" font-family="monospace" fill="currentColor" opacity="0.6">200ms</text>
+        <text x="713" y="123" font-size="10" font-family="monospace" fill="currentColor" opacity="0.6">100ms</text>
+
+        <line x1="110" y1="146" x2="750" y2="146" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+        <text x="110" y="162" text-anchor="middle" font-size="9.5" font-family="monospace" fill="currentColor" opacity="0.5">0</text>
+        <text x="208.5" y="162" text-anchor="middle" font-size="9.5" font-family="monospace" fill="currentColor" opacity="0.5">100</text>
+        <text x="306.9" y="162" text-anchor="middle" font-size="9.5" font-family="monospace" fill="currentColor" opacity="0.5">200</text>
+        <text x="405.4" y="162" text-anchor="middle" font-size="9.5" font-family="monospace" fill="currentColor" opacity="0.5">300</text>
+        <text x="503.8" y="162" text-anchor="middle" font-size="9.5" font-family="monospace" fill="currentColor" opacity="0.5">400</text>
+        <text x="602.3" y="162" text-anchor="middle" font-size="9.5" font-family="monospace" fill="currentColor" opacity="0.5">500</text>
+        <text x="700.8" y="162" text-anchor="middle" font-size="9.5" font-family="monospace" fill="currentColor" opacity="0.5">600</text>
+
+        <!-- 面板 B -->
+        <text x="110" y="192" font-size="11.5" font-weight="700" fill="currentColor" opacity="0.85">rl.on('line') · 并发</text>
+        <text x="330" y="192" font-size="11" fill="currentColor" opacity="0.55">总跨度 302ms = 只等于最慢那个</text>
+
+        <text x="100" y="223" text-anchor="end" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7">一</text>
+        <text x="100" y="253" text-anchor="end" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7">二</text>
+        <text x="100" y="283" text-anchor="end" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7">三</text>
+
+        <rect x="110" y="208" width="297.3" height="22" rx="4" fill="currentColor" opacity="0.75"/>
+        <rect x="110" y="238" width="198.9" height="22" rx="4" fill="currentColor" opacity="0.75"/>
+        <rect x="110" y="268" width="100.4" height="22" rx="4" fill="currentColor" opacity="0.75"/>
+
+        <text x="415" y="223" font-size="10" font-family="monospace" fill="currentColor" opacity="0.6">300ms</text>
+        <text x="317" y="253" font-size="10" font-family="monospace" fill="currentColor" opacity="0.6">200ms</text>
+        <text x="218" y="283" font-size="10" font-family="monospace" fill="currentColor" opacity="0.6">100ms</text>
+
+        <line x1="110" y1="198" x2="110" y2="296" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 3" opacity="0.8"/>
+        <text x="122" y="318" font-size="10.5" fill="currentColor" opacity="0.75">↑ 三个请求都在 0ms 附近同时出发</text>
+
+        <line x1="110" y1="306" x2="750" y2="306" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+        <text x="110" y="322" text-anchor="middle" font-size="9.5" font-family="monospace" fill="currentColor" opacity="0.5">0</text>
+        <text x="405.4" y="322" text-anchor="middle" font-size="9.5" font-family="monospace" fill="currentColor" opacity="0.5">300</text>
+        <text x="700.8" y="322" text-anchor="middle" font-size="9.5" font-family="monospace" fill="currentColor" opacity="0.5">600</text>
+      </svg>
+
+      <div class="legend">
+        <span class="legend-item"><span class="swatch swatch--ok"></span> for await（本项目采用）</span>
+        <span class="legend-item"><span class="swatch swatch--bad"></span> rl.on('line')（有问题的做法）</span>
+      </div>
+
+      <figcaption>
+        同一段假模型（一 300ms、二 200ms、三 100ms），同一批输入。实测数据，跑了 3 次结果一致。
+        看<strong>起始时刻</strong>：A 是 1 → 302 → 504（严格串行），B 是 0 → 0 → 1（同时发出）。
+      </figcaption>
+    </figure>
+
+    <div class="modes">
+      <div class="mode mode--ok">
+        <div class="mode-head">for await · 拉（pull）</div>
+        <p class="mode-body">
+          循环体里的 <code>await</code> 会让 <code>rl.next()</code> 停下来 ——
+          上一轮彻底跑完，才会拉下一行。天然串行。
+        </p>
+      </div>
+      <div class="mode mode--bad">
+        <div class="mode-head">rl.on('line') · 推（push）</div>
+        <p class="mode-body">
+          事件一到就触发回调，不等上一次跑完。
+          三行同时到达时，三个请求同时在途。
+        </p>
+      </div>
+    </div>
+
+    <h3 class="h3-block">自己跑一遍</h3>
+    <p class="prose">
+      上面的图不是示意，是真实测量的。演示脚本就在项目里，
+      是个独立文件，不依赖任何依赖：
+      <a href="../examples/readline-pull-vs-push.mjs">examples/readline-pull-vs-push.mjs</a>
+    </p>
+
+    <div class="runbox">
+      <span class="prompt">$</span>
+      <span class="cmd">node examples/readline-pull-vs-push.mjs</span>
+    </div>
+
+    <p class="prose" style="margin-top:24px;">
+      核心差别只有一行 —— <strong>要不要 <code>await</code></strong>：
+    </p>
+
+    <pre class="code"><code>A：for await —— 每轮跑完才拉下一行
+for await (const line of rl) {
+  const q = line.trim();
+  if (!q) continue;
+  marks.push(await ask(q));   <span class="ok">// ← await 让循环停住，串行的来源</span>
+}
+
+B：rl.on('line') —— 行一到就触发，不等上一次
+rl.on('line', (line) => {
+  const q = line.trim();
+  if (!q) return;
+  pending.push(ask(q));       <span class="bad">// ← 故意不 await，请求同时在途</span>
+});</code></pre>
+
+    <p class="prose" style="margin-top:24px;">实际输出（跑 3 次结果一致）：</p>
+
+    <pre class="code"><code>A. for await —— 拉模型，串行
+  发出顺序  一 → 二 → 三
+  完成顺序  <span class="ok">一 → 二 → 三</span>        <span class="hi">← 与提问顺序一致</span>
+  总跨度    <span class="hi">605ms</span>
+
+B. rl.on('line') —— 推模型，并发
+  发出顺序  一 → 二 → 三
+  完成顺序  <span class="bad">三 → 二 → 一</span>        <span class="hi">← 被打乱</span>
+  总跨度    <span class="hi">301ms</span>               <span class="hi">← 只等于最慢那个</span></code></pre>
+
+    <h3 class="h3-block">串行为什么是必需的</h3>
+    <p class="prose">
+      顺序一乱，不只是回答的<em>显示</em>顺序错了。真正的问题在于：
+      <code>session.append('assistant', ...)</code> 是在
+      <code>await client.chat(...)</code> <strong>返回之后</strong>才执行的
+      —— 也就是按「回答到达的先后」写入数组。
+    </p>
+    <p class="prose">
+      并发时谁先返回谁先进数组，对话历史就变成了
+      「问一、问二、问三、答三、答二、答一」。模型下一轮看到这种自相矛盾的历史，
+      推理就崩了。<strong>多轮对话的正确性，完全建立在串行之上。</strong>
+    </p>
+
+    <h3 class="h3-block">循环怎么结束</h3>
+    <p class="prose">
+      三种情况其实是一回事 —— <strong>输入流结束</strong>：<code>Ctrl-D</code>、
+      管道读完、stdin 被关闭。此时 readline 发出 <code>close</code>，
+      迭代器的 <code>next()</code> 返回 <code>{ done: true }</code>，循环退出，
+      <code>runRepl</code> 的 Promise resolve，进程自然退出。
+      不需要手动 <code>process.exit()</code> —— 这也是为什么
+      <code>printf 'x\n' | pnpm start</code> 能自己跑完。
+    </p>
+
+    <h3 class="h3-block">两个容易忽略的细节</h3>
+    <div class="qa">
+      <div class="qa-item">
+        <div class="qa-q">为什么要把 output 传进去？</div>
+        <p class="qa-a">
+          当 stdin 是真实终端时，readline 需要用它在屏幕上<strong>回显</strong>你敲的字、
+          处理退格和左右方向键。如果只做「读行」，其实可以不给。
+        </p>
+      </div>
+      <div class="qa-item">
+        <div class="qa-q">提示符是谁打印的？</div>
+        <p class="qa-a">
+          我们没用 readline 自带的 prompt 机制，而是自己 <code>write</code> 了一次。
+          所以它<strong>只在启动时出现一次</strong> —— 想让每轮都提示，
+          在循环体末尾再写一次即可。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    ai-chat · 对话部分 · 源码见 <code>demos/ai-chat/src/</code>
+  </footer>
+
+</div>
