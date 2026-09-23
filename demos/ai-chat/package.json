@@ -4,8 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "node src/index.ts",
-    "test": "node --test",
+    "start": "node --import ./loader.mjs src/index.ts",
+    "test": "node --import ./loader.mjs --test",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
