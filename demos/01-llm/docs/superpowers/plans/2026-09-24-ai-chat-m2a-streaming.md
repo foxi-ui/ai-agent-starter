@@ -28,8 +28,8 @@
 
 ```text
 TypeCheck: 退出码 0
-Test:      16/16 通过
-            config 3 / deepseek 6 / index 1 / repl 4 / session 2
+Test:      18/18 通过
+            config 3 / deepseek 6 / index 1 / repl 6 / session 2
 ```
 
 ## Review Focus
@@ -115,7 +115,7 @@ Expected: 退出码 0
 - [ ] **Step 3: 跑全量测试确认无回归**
 
 Run: `pnpm test`
-Expected: PASS（16/16，数量不变）
+Expected: PASS（18/18，数量不变）
 
 - [ ] **Step 4: Commit**
 
@@ -1100,7 +1100,7 @@ export function createDeepSeekClient(
 - [ ] **Step 5: 跑测试与类型检查确认通过**
 
 Run: `node --import ./loader.mjs --test test/deepseek.test.ts`
-Expected: PASS（20 个用例）
+Expected: PASS（19 个用例）
 
 Run: `pnpm run typecheck`
 Expected: 退出码 0
@@ -1613,7 +1613,7 @@ import type { LLMClient } from '@/llm/client.ts';
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node --import ./loader.mjs --test test/repl.test.ts`
-Expected: PASS（7 个用例）
+Expected: PASS（9 个用例）
 
 - [ ] **Step 5: 跑类型检查与全量测试**
 
