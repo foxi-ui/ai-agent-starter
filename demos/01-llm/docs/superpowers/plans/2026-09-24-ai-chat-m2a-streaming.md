@@ -39,6 +39,7 @@ Test:      16/16 通过
    `AI: ` 前缀由渲染器在**第一段正文之前**写出（见 Task 5），`You: ` 提示符仍在每次读取之前写。
    **这是 M1 刚修好的东西（`DECISIONS.md` D15），流式实现极易把它丢掉**：
    直接 `output.write(event.text)` 就会让前缀再次消失，且 M1 的三个逐字节断言会立刻变红。
+   需求正本见 `docs/01-full-design.md` §4「REPL 输出形状」。
 3. **多字节字符不被切断**：长中文回答逐字出现时无乱码（`TextDecoder({stream:true})` 生效）
 4. **`chat()` 与 `chatStream()` 的请求体差异**：`chat()` 不含 `stream`，`chatStream()` 含 `stream: true`，**两者都不含 `stream_options`**
 5. **末 chunk 的 `finish_reason` 触发 `done`**，且该 chunk 携带的 `usage` 被忽略而不报错
