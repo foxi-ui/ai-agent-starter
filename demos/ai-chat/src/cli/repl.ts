@@ -18,8 +18,17 @@ export const SYSTEM_PROMPT = '你是 CLI AI 助手，简洁直接地回答问题
 export interface ReplOptions {
   /** 从哪里读用户输入（真实运行时是 process.stdin） */
   input: NodeJS.ReadableStream;
-  /** 往哪里写回答（真实运行时是 process.stdout） */
+  /** 往哪里写模型回答（真实运行时是 process.stdout） */
   output: NodeJS.WritableStream;
+  /**
+   * 往哪里写错误与诊断信息（真实运行时是 process.stderr）。
+   *
+   * 与 output 分开是刻意的：stdout 只承载模型回答，
+   * 这样 `pnpm start > answers.txt` 得到的文件是干净的回答，
+   * 不会混进报错；管道里也能按流分别过滤。
+   * 声明为必填字段，是为了让「忘记分流」在编译期就暴露。
+   */
+  errorOutput: NodeJS.WritableStream;
   /** 提示符，例如 'You: ' */
   prompt: string;
 }
@@ -42,6 +51,11 @@ export async function runRepl(
   // 统一在这里补换行，省得每个调用点都自己写 '\n'
   const write = (text: string) => {
     options.output.write(text + '\n');
+  };
+
+  // 诊断信息的专用通道。与 write 对称，但写到 stderr
+  const writeError = (text: string) => {
+    options.errorOutput.write(text + '\n');
   };
 
   write(options.prompt);
@@ -69,7 +83,8 @@ export async function runRepl(
     } catch (error) {
       // 最小错误处理：打印错误后继续循环。
       // 不崩溃，也不污染上下文——失败的轮次不留 assistant 消息。
-      write(`[error] ${(error as Error).message}`);
+      // 走 stderr：stdout 只留给模型回答，重定向时不被诊断信息污染。
+      writeError(`[error] ${(error as Error).message}`);
     }
   }
 }
