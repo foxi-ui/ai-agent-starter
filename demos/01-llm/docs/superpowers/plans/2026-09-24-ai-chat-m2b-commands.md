@@ -946,12 +946,19 @@ T10 现在只并列了两种「找不到模块」的形状（没带 loader → `
 M2b 实施中又实测到**第三种**，且它是最常遇到的一种 —— **给既有模块加函数**时的 TDD RED：
 
 ```console
-Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.ts'
+SyntaxError: The requested module '@/cli/render.ts'
   does not provide an export named 'renderCommandResult'
 ```
 
 前两种是「模块不存在」，这一种是「**模块存在、但没导出那个名字**」—— ESM 在**模块链接期**拒绝，
 代码一行都没跑。请把它作为 T10 的第三种形状补进去，并点明它对应「给既有模块加函数」这个常见场景。
+
+> ⚠️ **不要带 `[ERR_MODULE_NOT_FOUND]` 码。** 本块原先写的是
+> `Error [ERR_MODULE_NOT_FOUND] / SyntaxError: …` —— 那是把情形 A 的错误码串到了情形 C 上。
+> Task 5 实施者与**控制方各自独立复现**（`node -v` = v22.23.2，本项目锁定版本）：
+> 情形 C 的错误名是**裸 `SyntaxError`、无方括号码**；同批探测里情形 A 确实带该码、情形 B 确实不带。
+> `docs/troubleshooting.md` 是「照报错检索」用的文档，写一个在本项目 Node 版本上复现不出来的码，
+> 正是本次任务要清掉的那类不精确。（该码在**其他** Node 版本上是否会出现，双方均未验证，故文档里也不写这类不确定的话。）
 
 **①②③④ 都不改变任何行为**，改完 `pnpm test` 用例数不变（以执行时的实际值为准）。
 - [ ] **Step 1: 在 `HOW-IT-WORKS.md` 的数据流图后加一节**
