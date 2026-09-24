@@ -231,7 +231,12 @@ test('空输入与连续空行不崩', () => {
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `node --import ./loader.mjs --test test/sse.test.ts`
-Expected: FAIL —— `Cannot find package '@/llm'`（模块还不存在）
+Expected: FAIL —— **`ENOENT: no such file or directory, open '<绝对路径>/src/llm/sse.ts'`**（`code: 'ENOENT'`）
+
+> **为什么不是 `Cannot find package '@/llm'`**（实测确认）：`loader-hooks.mjs` 的 `resolve` 钩子把
+> `@/x` 映射成绝对 file URL 后 `shortCircuit`，所以**解析是成功的**，失败点后移到 load 阶段，
+> 报 `ENOENT` + 绝对路径。`Cannot find package '@/'` 是**没带 loader 时**的形状 ——
+> 那时 `@/llm` 被当成裸包名去找。两种情形报错不同，别混用。
 
 - [ ] **Step 3: 实现 `src/llm/sse.ts`**
 
@@ -1926,6 +1931,51 @@ ok 7 - test/support/helper.ts
 只有 `repl.test.ts` 需要 fake client，没必要为此引入共享文件。
 
 来源：实测（2026-09-24 写 M2 计划时探测到）。
+```
+
+- [ ] **Step 6b: 在 `docs/troubleshooting.md` 追加 T10 —— 两种「找不到模块」的形状**
+
+紧接着 T9 追加（同一个文件，顺带补上，因为 T1 只记了其中一种形状，容易误诊）：
+
+```markdown
+## T10（附）`@/` 别名找不到模块时，报错形状取决于 loader 在不在
+
+**症状**
+
+同样是「`@/` 指向的模块不存在」，报错完全不同：
+
+```console
+# 情形 A：漏了 --import ./loader.mjs
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@/cli' imported from .../test/repl.test.ts
+
+# 情形 B：带了 loader，但目标文件不存在
+Error: ENOENT: no such file or directory, open
+       '/Users/.../demos/01-llm/src/llm/__does_not_exist.ts'
+  code: 'ENOENT'
+```
+
+**原因**
+
+`loader-hooks.mjs` 的 `resolve` 钩子把 `@/x` 映射成**绝对 file URL** 并 `shortCircuit`：
+
+- **带 loader**：解析阶段成功（映射出的 URL 语法有效），失败点后移到 **load 阶段**，
+  于是报 `ENOENT` + 绝对路径 —— 报错里能看到 `src/` 的真实路径。
+- **不带 loader**：`@/cli` 被当成**裸包名**去做 node_modules 解析，于是报
+  `Cannot find package`。
+
+**定位**
+
+看报错里有没有绝对路径：
+
+- 有 → 情形 B，**别名机制是好的**，缺的是那个文件（检查路径拼写、文件名）
+- 没有、且说的是 `package '@/'` → 情形 A，检查命令有没有带 `--import ./loader.mjs`
+
+**避免**
+
+写「预期会失败」的测试期望时，先确认是哪种情形 —— 这两种报错长得很像，但根因完全不同。
+
+来源：实测（2026-09-24 M2a Task 2 实施时，实现者按 brief 的期望去核对，发现期望写的是情形 A、
+实际发生的是情形 B）。
 ```
 
 - [ ] **Step 7: 改仓库根 `README.md` 的阶段目录表**
