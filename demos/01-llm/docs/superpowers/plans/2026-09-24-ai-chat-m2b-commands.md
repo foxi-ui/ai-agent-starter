@@ -766,7 +766,38 @@ import { createStreamRenderer, renderCommandResult, renderUnknownCommand } from 
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node --import ./loader.mjs --test test/repl.test.ts`
-Expected: PASS（7 + 4 = 11 个用例）
+Expected: PASS（以实际输出为准；Task 4 新增 4 个用例）
+
+- [ ] **Step 4b: 顺手清掉两处 M2a 遗留（都在本任务已改的 `repl.ts` 里）**
+
+这两处由 M2a Task 6 的审查发现，当时因「只替换提问处理段」的范围划定未动。本任务本来就在改这个文件，
+在此一并处理最省事。
+
+**① 删除已成死代码的局部助手 `write`**（约 55–57 行）。它唯一的调用点是 M2a 之前的
+`write(\`AI: ${result.content}\`)`；Task 6 把回答改走渲染器后它就没人用了。
+`tsconfig` 未开 `noUnusedLocals`，**所以 typecheck 不会报** —— 只能靠人发现。
+同时改掉紧跟其后 `writeError` 注释里「与 write 对称」那半句（`write` 没了，对称也就无从谈起）。
+
+> **注意**：命令结果的打印**不走**这个 `write` —— 它走 `cli/render.ts` 的 `renderCommandResult`。
+> 所以删掉它不会影响本任务的任何功能。
+
+**② 修正 `writePrompt()` 上方那句注释**。它现在写的是：
+
+```ts
+      // 写在读取之前而不是本轮处理之后：EOF 时就不会多出一个孤零零的提示符
+```
+
+**但实测相反**（2026-09-24 复核）：提示符写在读取之前，而 EOF 只有读的时候才知道，
+所以**最后一次提示符必然已经写出** —— `stdout` 以 `You: ` 结尾。这正是 `DECISIONS.md` D15
+「已知边界」记录的行为，也是 `test/repl.test.ts` 里 `'You: AI: 你好\nYou: '` 那条断言钉住的形状。
+注释与行为相反，比没有注释更坏。改为准确表述，例如：
+
+```ts
+      // 每次读取尝试前各写一次。注意：EOF 前那次也会写出，所以输出以 `You: ` 结尾
+      // —— 这是 D15 的「已知边界」，不是 bug
+```
+
+**两个动作都不改变行为**，改完 `pnpm test` 应仍然全绿、用例数不变。
 
 - [ ] **Step 5: 跑类型检查与全量测试**
 
