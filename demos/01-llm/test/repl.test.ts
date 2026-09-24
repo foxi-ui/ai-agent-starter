@@ -234,6 +234,32 @@ test('流中途失败：不追加 assistant，且补上收尾换行', async () =
   ]);
 });
 
+test('流中途失败：收尾换行写在该行的错误之前（跨流字节顺序）', async () => {
+  // 两条流指向**同一个**收集器：分流本身另有上面几条用例钉住，
+  // 这条只关心跨流的字节顺序 —— 把 catch 里那次 `renderer.finish()` 拿掉，
+  // 报错就会粘在半截回答后面（`半截[error] boom`），而不是另起一行。
+  const { chunks, stream } = collector();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream() {
+      yield { type: 'text-delta', text: '半截' };
+      throw new Error('boom');
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['第一问']),
+    output: stream,
+    errorOutput: stream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+  });
+
+  assert.equal(chunks.join(''), 'You: AI: 半截\n[error] boom\nYou: ');
+});
+
 test('/clear 之后下一轮的 messages 只剩 system 与当前提问', async () => {
   const sent: Array<{ role: string; content: string }[]> = [];
   const { chunks, stream, errStream } = captureOutput();
@@ -348,4 +374,56 @@ test('未知命令走 stderr，且不触发请求', async () => {
   assert.equal(calls, 0);
   assert.ok(errChunks.join('').includes('未知命令'));
   assert.ok(!chunks.join('').includes('未知命令'));
+});
+
+// 上一条只喂一行，钉住了「未知命令不发请求」，但钉不住「提示之后循环还在」——
+// 把未知命令分支的 `continue` 改成 `break`，其余用例依旧全绿。
+// 这里再喂一行：只有循环没退出，第二行才会走到请求。
+test('未知命令之后循环继续，不是 break 出 REPL', async () => {
+  let calls = 0;
+  const { chunks, stream, errChunks, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream() {
+      calls += 1;
+      yield { type: 'text-delta', text: 'ok' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['/foo', '问题']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+  });
+
+  // 恰好一次：未知命令那次没发，第二行的「问题」发了
+  assert.equal(calls, 1);
+  assert.ok(errChunks.join('').includes('未知命令'));
+  assert.ok(!chunks.join('').includes('未知命令'));
+});
+
+test('/history 的列表走 stdout', async () => {
+  const { chunks, stream, errChunks, errStream } = captureOutput();
+  const client = fakeClient(['ok']);
+
+  await runRepl(client, {
+    input: inputFrom(['第一问', '/history']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+  });
+
+  // 只断言「命令被执行了」（下一轮 messages 里没有 /history）是不够的：
+  // 把 renderCommandResult 的输出改道 stderr，那条用例照样全绿 ——
+  // 命令结果和模型回答一样落在 stdout，得直接断言。
+  const out = chunks.join('');
+  assert.ok(out.includes('1. [user] 第一问'));
+  assert.ok(out.includes('2. [assistant] ok'));
+  assert.deepEqual(errChunks, []);
 });
