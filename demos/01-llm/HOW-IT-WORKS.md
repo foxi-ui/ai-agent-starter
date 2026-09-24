@@ -1,7 +1,7 @@
 # 一轮对话发生了什么
 
 > 回答：从敲下回车到看见回答，代码里实际执行了哪些步骤？
-> 事实来源：`src/cli/repl.ts`、`src/core/session.ts`、`src/llm/deepseek.ts`。
+> 事实来源：`src/cli/repl.ts`、`src/cli/render.ts`、`src/core/session.ts`、`src/llm/deepseek.ts`、`src/llm/sse.ts`。
 
 ## 数据流全貌
 
@@ -110,6 +110,8 @@ const content = data.choices[0]?.message?.content ?? '';
 
 正文由**渲染器**（`src/cli/render.ts`）逐块写到 stdout：第一个 `text-delta` 到达时
 先写 `AI: ` 前缀，之后每来一块正文就接着写，**不补换行**（换行统一由收尾负责）。
+另外 `done` 分支有个**兜底**：整轮一个字都没产出（比如空回答）时也补上前缀 ——
+空回答在流式与非流式两条路径下的形状必须一致（见 `test/render.test.ts`）。
 
 ```ts
 for await (const event of stream) {
@@ -148,16 +150,17 @@ interface Message { role: Role; content: string; }
 
 ## `content` 与 `reasoning_content`
 
-DeepSeek 的响应中，`message` 可能同时包含两个字段：
+DeepSeek 的响应中，同一处正文与思考可能同时出现两个字段（非流式挂在 `message` 上，
+流式挂在 `delta` 上，字段名相同）：
 
 | 字段 | 含义 |
 | --- | --- |
-| `message.content` | 最终回答（要打印的内容） |
-| `message.reasoning_content` | 模型的思考过程（thinking 默认开启时会返回） |
+| `content` | 最终回答（要打印的内容） |
+| `reasoning_content` | 模型的思考过程（thinking 默认开启时会返回） |
 
-本项目**只读取并打印 `content`**，`reasoning_content` 存在但被忽略。
-adapter 显式只解构 `content` 字段，因此思考过程不会进入 `Session`，
-也不会占用后续请求的上下文。
+`reasoning_content` 被解析成 `reasoning-delta`，由渲染器折算成 stderr 的一行
+`[思考中…]` 指示；**思考内容本身不打印、也不进入 `Session`**，因此不会占用
+后续请求的上下文（见 `DECISIONS.md` D22）。
 
 ## 一轮对话在终端上的形状
 
@@ -174,7 +177,7 @@ AI: ...
 
 1. **`You: ` 在每次读取之前写**，不是只在循环开始前写一次 —— 否则第二轮起用户是"盲打"
 2. **提示符不补换行** —— 它要和用户输入同行（终端负责回显输入）
-3. **`AI: ` 与正文一起写，且只在成功路径上写** —— 失败时 stdout 不会留下一个空的 `AI: `
+3. **`AI: ` 只在模型产出了内容时才写** —— 失败时 stdout 不会留下一个空的 `AI: `
 
 **已知边界**：提示符写在读取之前，而 EOF 只有在读的时候才知道，所以**最后一次提示符
 必然已经写出去**。文档没有规定退出时的行为，这里选择接受它（`pnpm start < q.txt` 的
@@ -201,7 +204,7 @@ AI: ...
 两个细节：
 
 1. **失败的轮次不追加 assistant 消息。** `session.append('assistant', ...)` 只在
-   `chat()` 成功返回后执行，因此报错不会在历史中留下空洞。
+   流正常读完（`chatStream` 的迭代器自然结束）之后执行，因此报错不会在历史中留下空洞。
 2. **错误信息优先取 API 返回的 `error.message`。** 非 2xx 时先尝试把 body 解析成
    JSON 并取 `error.message`（例如 `Invalid API key`）；解析失败则回落到原始 body 文本。
 

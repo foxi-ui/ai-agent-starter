@@ -84,6 +84,10 @@
 
 **代价**：调试时看不到思考过程。后续用 `--show-reasoning` 显式开启。
 
+**本条已由 D22 部分修订**：`reasoning_content` 仍不打印、仍不进入上下文，但
+**不再被完全忽略** —— M2a 起它被归一化成 `reasoning-delta`，由渲染器折算成
+stderr 的一行 `[思考中…]` 指示。
+
 ---
 
 ## D7. 失败的轮次不写入 assistant 消息
@@ -311,7 +315,7 @@ AI: ...
 **为什么参数位迟早要有**：M4 的 `--no-thinking` 同样是 per-call 参数 ——
 thinking 开关不是 client 的身份，是这一轮的属性。
 
-**放弃**：repl 持 factory 切换时重建 client（要改 `runRepl` 签名与 4 个测试）；
+**放弃**：repl 持 factory 切换时重建 client（要改 `runRepl` 签名，并作废 `repl.test.ts` 原有的 4 个用例）；
 client 加可变 `setModel()`（接口有状态，多会话共享会互相污染）。
 
 ---

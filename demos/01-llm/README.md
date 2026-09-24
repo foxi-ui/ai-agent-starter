@@ -125,6 +125,8 @@ AI: ...
   test/
     session.test.ts
     deepseek.test.ts
+    sse.test.ts         # SSE 分帧（纯函数）
+    render.test.ts      # StreamEvent → stdout/stderr
     repl.test.ts
     config.test.ts
     index.test.ts       # 入口集成测试（子进程，验证退出码）

@@ -33,7 +33,7 @@ Build:     N/A   (noEmit，Node 直接运行 .ts，无构建产物)
 
 **整体：3 项达标 / 1 项部分 / 2 项未做。**
 
-M1（本次增量）自身的交付目标 —— **非流式多轮对话 + 最小错误处理** —— 已全部达成并验证。上表的 ❌ 属于后续增量，不是 M1 的欠账。
+M1 自身的交付目标 —— **非流式多轮对话 + 最小错误处理** —— 已全部达成并验证。上表的 ❌ 属于后续增量，不是 M1 的欠账。
 
 ---
 
@@ -42,7 +42,7 @@ M1（本次增量）自身的交付目标 —— **非流式多轮对话 + 最�
 **证据**
 
 - `src/llm/deepseek.ts` 用原生 `fetch` 直接 `POST {baseUrl}/chat/completions`，**无 SDK、无框架、零运行时依赖**
-- 请求体只带 `model` + `messages`；鉴权走 `Authorization: Bearer`
+- 请求体只带 `model` + `messages`（非流式路径；流式路径多一个 `stream: true`）；鉴权走 `Authorization: Bearer`
 - 离线断言：`test/deepseek.test.ts`「请求体包含 model 和 messages」校验了 URL、请求体、鉴权头
 - 真实网络：2026-09-24 用 `.env.local` 的真实 key 跑通两轮对话
 
@@ -82,7 +82,7 @@ M1（本次增量）自身的交付目标 —— **非流式多轮对话 + 最�
 **未做（属 M6）**
 
 - **错误分类**：统一成带 `code` 的 `LLMError`（`invalid_request` / `unauthorized` / `insufficient_balance` / `retryable` / `timeout` / `network` / `unknown`），REPL 按 code 决定提示
-- **超时**：首字节超时 + 流空闲超时（各默认 30s）。**不能用单一总时长包住整个流** —— 长回答会被误杀
+- **超时**：非流式的首字节超时，以及 `--timeout` 开关。**不能用单一总时长包住整个流** —— 长回答会被误杀。**流侧的空闲超时已随 M2a 落地**（30s，见 `DECISIONS.md` D21）
 - **会话回滚**：超时/网络中断时把会话回滚到本轮之前
 - **自动重试：明确不做**。理由见 `01-full-design.md` §9 —— 重试会让 token 统计变脏（一次失败重试算几轮？），且重试/熔断属于阶段 6 生产化内容
 
