@@ -276,7 +276,12 @@ test('/model 不校验名字（有意为之）', () => {
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `node --import ./loader.mjs --test test/commands.test.ts`
-Expected: FAIL —— `Cannot find package '@/core'` 指向的 `commands.ts` 不存在
+Expected: FAIL —— **`ENOENT: no such file or directory, open '<绝对路径>/src/core/commands.ts'`**（`code: 'ENOENT'`）
+
+> **不是 `Cannot find package`**（实测确认）：`loader-hooks.mjs` 的 `resolve` 钩子把 `@/x` 映射成绝对
+> file URL 后 `shortCircuit`，所以**解析是成功的**，失败点后移到 load 阶段，报 `ENOENT` + 绝对路径。
+> `Cannot find package '@/'` 是**没带 loader 时**的形状 —— 那时 `@/core` 被当成裸包名去找。
+> 两种情形报错不同，别混用（详见 `demos/01-llm/docs/troubleshooting.md` T10）。
 
 - [ ] **Step 3: 实现 `src/core/commands.ts`**
 
