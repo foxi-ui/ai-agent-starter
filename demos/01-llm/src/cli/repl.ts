@@ -31,6 +31,8 @@ export interface ReplOptions {
   errorOutput: NodeJS.WritableStream;
   /** 提示符，例如 'You: ' */
   prompt: string;
+  /** 会话的初始模型，通常来自 resolveConfig 的 config.model */
+  model: string;
 }
 
 /**
@@ -45,7 +47,7 @@ export async function runRepl(
   options: ReplOptions,
 ): Promise<void> {
   // 一整段对话的消息记录，循环期间一直被复用
-  const session = new Session();
+  const session = new Session(options.model);
   const rl = createInterface({ input: options.input, output: options.output });
 
   // 统一在这里补换行，省得每个调用点都自己写 '\n'
@@ -85,7 +87,10 @@ export async function runRepl(
       session.append('user', question);
       try {
         // 把「system + 目前为止的全部历史」发过去，模型据此理解上下文
-        const result = await client.chat(session.toMessages(SYSTEM_PROMPT));
+        // 每轮都把「当前模型」作为请求参数传下去
+        const result = await client.chat(session.toMessages(SYSTEM_PROMPT), {
+          model: session.model,
+        });
         // 只在成功之后才记录 AI 的回答。
         // 失败时若也追加，历史里就会出现一条「伪造的回答」，
         // 下一轮模型会把它当成自己说过的话，产生自我矛盾。

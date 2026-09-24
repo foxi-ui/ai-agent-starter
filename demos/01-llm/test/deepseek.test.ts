@@ -109,3 +109,31 @@ test('错误体不是 JSON 时回落为原始文本', async () => {
     /502 Bad Gateway/,
   );
 });
+
+test('options.model 覆盖构造时的默认模型', async () => {
+  let capturedInit: Parameters<typeof fetch>[1] | undefined;
+  mockFetch(async (_url, init) => {
+    capturedInit = init;
+    return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+  });
+
+  const client = createDeepSeekClient(config);
+  await client.chat([{ role: 'user', content: 'hi' }], { model: 'deepseek-v4-pro' });
+
+  const body = JSON.parse(String(capturedInit!.body));
+  assert.equal(body.model, 'deepseek-v4-pro');
+});
+
+test('不传 options.model 时回落构造时的默认模型', async () => {
+  let capturedInit: Parameters<typeof fetch>[1] | undefined;
+  mockFetch(async (_url, init) => {
+    capturedInit = init;
+    return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+  });
+
+  const client = createDeepSeekClient(config);
+  await client.chat([{ role: 'user', content: 'hi' }]);
+
+  const body = JSON.parse(String(capturedInit!.body));
+  assert.equal(body.model, 'deepseek-flash');
+});

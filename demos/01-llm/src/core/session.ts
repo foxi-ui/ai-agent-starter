@@ -16,6 +16,25 @@ export class Session {
   private messages: Message[] = [];
 
   /**
+   * 本会话当前使用的模型。
+   *
+   * 它属于「会话状态」而不是「client 配置」——`/model` 能中途切换它，
+   * 每次请求再把它作为 per-call 参数传给 client。
+   */
+  private currentModel: string;
+
+  /**
+   * @param model 初始模型，通常来自 `resolveConfig` 的 `config.model`
+   */
+  constructor(model: string) {
+    // 刻意不用 `constructor(private currentModel: string)` 这种参数属性写法：
+    // 本项目靠 Node 的原生类型擦除直接跑 .ts，而擦除模式（strip-only）
+    // 不支持 TS 独有的参数属性语法，会在运行时报 ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX。
+    // 注意 tsc --noEmit 不会拦下它 —— 类型检查能过、运行才炸，所以只能靠这条注释守着。
+    this.currentModel = model;
+  }
+
+  /**
    * 追加一条消息到会话末尾。
    *
    * @param role 谁说的：user 是用户，assistant 是 AI
@@ -42,5 +61,15 @@ export class Session {
     // 用 concat 生成新数组返回，避免把内部数组的引用暴露出去，
     // 防止调用方在无意中改到这个 Session 的内部状态
     return messages.concat(this.messages);
+  }
+
+  /** 当前模型 */
+  get model(): string {
+    return this.currentModel;
+  }
+
+  /** 切换当前模型；只影响后续请求，不改动已有消息 */
+  set model(name: string) {
+    this.currentModel = name;
   }
 }

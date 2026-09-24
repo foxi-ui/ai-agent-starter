@@ -51,6 +51,7 @@ test('一问一答：输出是 You:/AI: 交替的对话记录', async () => {
     input: inputFrom(['hi']),
     output: stream,
     errorOutput: errStream,
+    model: 'deepseek-flash',
     prompt: 'You: ',
   });
   // 逐字节断言，而不是 some() + includes()：
@@ -75,6 +76,7 @@ test('多轮：每一问前都有 You: 提示符，每一答前都有 AI: 前缀
     input: inputFrom(['第一问', '第二问']),
     output: stream,
     errorOutput: errStream,
+    model: 'deepseek-flash',
     prompt: 'You: ',
   });
   assert.equal(chunks.join(''), 'You: AI: 回答一\nYou: AI: 回答二\nYou: ');
@@ -87,6 +89,7 @@ test('失败轮次不输出 AI: 前缀', async () => {
     input: inputFrom(['第一问']),
     output: stream,
     errorOutput: errStream,
+    model: 'deepseek-flash',
     prompt: 'You: ',
   });
   // 关键：绝不能留下一个「有 AI: 但后面什么都没有」的空壳。
@@ -103,6 +106,7 @@ test('错误写 stderr，不污染 stdout', async () => {
     input: inputFrom(['第一问']),
     output: stream,
     errorOutput: errStream,
+    model: 'deepseek-flash',
     prompt: 'You: ',
   });
   const err = errChunks.join('');
@@ -120,6 +124,7 @@ test('非 2xx 错误不崩溃，继续下一轮', async () => {
     input: inputFrom(['第一问', '第二问']),
     output: stream,
     errorOutput: errStream,
+    model: 'deepseek-flash',
     prompt: 'You: ',
   });
   const joined = chunks.join('');
@@ -139,6 +144,7 @@ test('多轮对话上下文按序累积', async () => {
     input: inputFrom(['第一问', '第二问']),
     output: stream,
     errorOutput: errStream,
+    model: 'deepseek-flash',
     prompt: 'You: ',
   });
   assert.equal(sent.length, 2);

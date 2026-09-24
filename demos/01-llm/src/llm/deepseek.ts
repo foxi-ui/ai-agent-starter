@@ -5,7 +5,7 @@
 // 保持安静，才能在测试里被反复调用而不产生多余输出。
 
 import type { LLMClient, LLMClientConfig } from '@/llm/client.ts';
-import type { Message, ChatResult } from '@/core/types.ts';
+import type { ChatOptions, Message, ChatResult } from '@/core/types.ts';
 
 /**
  * 造一个调用 DeepSeek 非流式接口的客户端。
@@ -20,7 +20,7 @@ export function createDeepSeekClient(config: LLMClientConfig): LLMClient {
   const url = `${config.baseUrl}/chat/completions`;
 
   return {
-    async chat(messages: Message[]): Promise<ChatResult> {
+    async chat(messages: Message[], options?: ChatOptions): Promise<ChatResult> {
       // 用 Node 内置的 fetch，无需任何第三方 HTTP 库
       const response = await fetch(url, {
         method: 'POST',
@@ -31,7 +31,9 @@ export function createDeepSeekClient(config: LLMClientConfig): LLMClient {
         },
         // 请求体只传本次用到的两个字段；
         // stream / temperature 等都跟随服务端默认值，不额外发送
-        body: JSON.stringify({ model: config.model, messages }),
+        // 本次请求的模型优先；没传才回落到构造时的默认值。
+        // 这样「当前模型」可以随会话切换，而 client 本身保持无状态。
+        body: JSON.stringify({ model: options?.model ?? config.model, messages }),
       });
 
       // 非 2xx（如 401 密钥错误、429 限流）统一当作失败抛出，

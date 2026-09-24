@@ -28,4 +28,5 @@ runRepl(createDeepSeekClient(config), {
   // 错误与诊断 → stderr，两条流互不污染
   errorOutput: process.stderr,
   prompt: 'You: ',
+  model: config.model,
 });
