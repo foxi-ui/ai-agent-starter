@@ -28,7 +28,7 @@
 ```text
 TypeCheck: 退出码 0
 Test:      54/54 通过
-           config 3 / deepseek 20 / index 1 / render 8 / repl 7 / session 3 / sse 12
+           config 3 / deepseek 20 / index 1 / render 10 / repl 7 / session 3 / sse 12
 Session:   构造函数已是 constructor(model: string)，已有 model getter/setter
 ```
 
@@ -46,7 +46,7 @@ Session:   构造函数已是 constructor(model: string)，已有 model getter/s
 3. **`/model deepseek-v4-pro` 之后下一轮请求真的带上了新模型**（看 `options.model`，不是只看回显）
 4. **`pnpm --silent start > answers.txt`** → `/history` 的结果出现在文件里，未知命令的提示**不**出现在文件里
 5. **未知命令不发请求**：`/foo` 之后不应有任何 fetch
-6. **回归**：M2a 的 54 个用例全部保持通过
+6. **回归**：M2a 的全部用例保持通过
 
 ---
 
@@ -137,7 +137,7 @@ Expected: PASS（5 个用例）
 - [ ] **Step 5: 跑全量测试确认无回归**
 
 Run: `pnpm test`
-Expected: PASS（54 + 2 = 56 个用例）
+Expected: PASS（全绿）
 
 - [ ] **Step 6: Commit**
 
@@ -388,7 +388,7 @@ Run: `pnpm run typecheck`
 Expected: 退出码 0
 
 Run: `pnpm test`
-Expected: PASS（56 + 12 = 68 个用例）
+Expected: PASS（全绿）
 
 - [ ] **Step 6: Commit**
 
@@ -562,7 +562,7 @@ export function renderUnknownCommand(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node --import ./loader.mjs --test test/render.test.ts`
-Expected: PASS（8 + 6 = 14 个用例）
+Expected: PASS（16 个用例）
 
 - [ ] **Step 5: 跑类型检查与全量测试**
 
@@ -570,7 +570,7 @@ Run: `pnpm run typecheck`
 Expected: 退出码 0
 
 Run: `pnpm test`
-Expected: PASS（68 + 6 = 74 个用例）
+Expected: PASS（全绿）
 
 - [ ] **Step 6: Commit**
 
@@ -732,7 +732,8 @@ import { renderCommandResult, renderUnknownCommand } from '@/cli/render.ts';
 import type { LLMClient } from '@/llm/client.ts';
 ```
 
-在 `for await` 循环里，把空行检查之后、`session.append('user', question)` **之前**插入：
+在 `repl.ts` 的 `while (true)` 循环里，把空行检查（`if (question === '') continue;`）之后、
+`session.append('user', question)` **之前**插入：
 
 ```ts
     // 命令必须在 append 之前处理，所以它永远不会进入对话上下文。
@@ -773,7 +774,7 @@ Run: `pnpm run typecheck`
 Expected: 退出码 0
 
 Run: `pnpm test`
-Expected: PASS（74 + 4 = 78 个用例）
+Expected: PASS（全绿）
 
 - [ ] **Step 6: 手动验证分流（真实网络，需 key）**
 
@@ -932,7 +933,7 @@ git commit -m "feat: handle slash commands in the REPL"
 - [ ] **Step 5: 最终验证**
 
 Run: `pnpm run typecheck && pnpm test`
-Expected: typecheck 退出码 0；测试 78/78 通过
+Expected: typecheck 退出码 0；测试全绿
 
 Run: `grep -c '^```' HOW-IT-WORKS.md DECISIONS.md README.md ../../README.md`
 Expected: 每个文件的 ``` 数量都是偶数
@@ -953,7 +954,7 @@ git commit -m "docs: update stage status for M2"
 ```text
 TypeCheck: pnpm run typecheck  → 退出码 0
 Lint:      N/A（本仓库未配置 linter）
-Test:      pnpm test           → 78/78 通过
+Test:      pnpm test           → 全绿
 Build:     N/A（noEmit，无构建产物）
 冒烟:      Task 4 Step 6 —— 需用户确认后才执行；跳过则如实标注「未验证」
 ```

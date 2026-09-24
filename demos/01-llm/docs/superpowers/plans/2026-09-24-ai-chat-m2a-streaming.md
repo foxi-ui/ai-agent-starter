@@ -35,11 +35,16 @@ Test:      16/16 通过
 ## Review Focus
 
 1. **`pnpm --silent start > answers.txt`** → 文件里只有回答，**无** `[思考中…]`、无 `[error]`
-2. **多字节字符不被切断**：长中文回答逐字出现时无乱码（`TextDecoder({stream:true})` 生效）
-3. **`chat()` 与 `chatStream()` 的请求体差异**：`chat()` 不含 `stream`，`chatStream()` 含 `stream: true`，**两者都不含 `stream_options`**
-4. **末 chunk 的 `finish_reason` 触发 `done`**，且该 chunk 携带的 `usage` 被忽略而不报错
-5. **半截答案不进上下文**：流中途失败后，下一轮 `messages` 里没有那条失败的回答
-6. **回归**：现有 16 个用例中，`config` 与 `index` 两个文件完全不用改
+2. **一轮对话的终端形状不能被这次改动破坏**：仍是 `You: 问` / `AI: 答` 交替 ——
+   `AI: ` 前缀由渲染器在**第一段正文之前**写出（见 Task 5），`You: ` 提示符仍在每次读取之前写。
+   **这是 M1 刚修好的东西（`DECISIONS.md` D15），流式实现极易把它丢掉**：
+   直接 `output.write(event.text)` 就会让前缀再次消失，且 M1 的三个逐字节断言会立刻变红。
+3. **多字节字符不被切断**：长中文回答逐字出现时无乱码（`TextDecoder({stream:true})` 生效）
+4. **`chat()` 与 `chatStream()` 的请求体差异**：`chat()` 不含 `stream`，`chatStream()` 含 `stream: true`，**两者都不含 `stream_options`**
+5. **末 chunk 的 `finish_reason` 触发 `done`**，且该 chunk 携带的 `usage` 被忽略而不报错
+6. **半截答案不进上下文**：流中途失败后，下一轮 `messages` 里没有那条失败的回答
+7. **回归**：`config` 与 `index` 两个测试文件完全不用改；
+   **`repl.test.ts` 里三个逐字节断言（`'You: AI: …'`）必须继续通过** —— 它们是这次改动是否退化的探针
 
 ---
 
@@ -322,7 +327,7 @@ Expected: PASS（12 个用例）
 - [ ] **Step 5: 跑全量测试确认无回归**
 
 Run: `pnpm test`
-Expected: PASS（16 + 12 = 28 个用例）
+Expected: PASS（全绿）
 
 - [ ] **Step 6: Commit**
 
@@ -339,7 +344,7 @@ git commit -m "feat: add SSE frame parser"
 - Modify: `demos/01-llm/src/llm/client.ts`
 - Modify: `demos/01-llm/src/llm/deepseek.ts:23-34`
 - Modify: `demos/01-llm/src/core/session.ts`
-- Modify: `demos/01-llm/src/cli/repl.ts:18-25,43-47,77`
+- Modify: `demos/01-llm/src/cli/repl.ts`（`ReplOptions` 加 `model`、`new Session(options.model)`、`chat()` 调用处传 `options`）
 - Modify: `demos/01-llm/src/index.ts:24-30`
 - Test: `demos/01-llm/test/deepseek.test.ts`（追加 1 例）
 - Test: `demos/01-llm/test/session.test.ts`（改 + 追加）
@@ -567,7 +572,7 @@ Run: `pnpm run typecheck`
 Expected: 退出码 0
 
 Run: `pnpm test`
-Expected: PASS（28 + 3 = 31 个用例：deepseek 6→8、session 2→3、其余不变）
+Expected: PASS（全绿：deepseek 6→8、session 2→3、其余不变）
 
 - [ ] **Step 9: 手动确认缺 key 路径未被破坏**
 
@@ -1094,7 +1099,7 @@ export function createDeepSeekClient(
 - [ ] **Step 5: 跑测试与类型检查确认通过**
 
 Run: `node --import ./loader.mjs --test test/deepseek.test.ts`
-Expected: PASS（8 + 12 = 20 个用例）
+Expected: PASS（20 个用例）
 
 Run: `pnpm run typecheck`
 Expected: 退出码 0
@@ -1102,7 +1107,7 @@ Expected: 退出码 0
 - [ ] **Step 6: 跑全量测试确认无回归**
 
 Run: `pnpm test`
-Expected: PASS（31 + 12 = 43 个用例）
+Expected: PASS（全绿）
 
 - [ ] **Step 7: Commit**
 
@@ -1124,8 +1129,14 @@ git commit -m "feat: add chatStream with SSE parsing and idle timeout"
 - Produces:
   - `interface StreamRenderer { onEvent(event: StreamEvent): void; finish(): void }`
   - `function createStreamRenderer(options: { output: NodeJS.WritableStream; errorOutput: NodeJS.WritableStream }): StreamRenderer`
+  - **渲染器负责写 `AI: ` 前缀**（模块内常量 `ANSWER_PREFIX`），且在**第一段正文之前**写、整轮只写一次
 
 > **渲染器只呈现、不累积**。正文由 `repl` 自己 `text += ev.text` 攒——各管一件事。
+>
+> **`AI: ` 前缀归渲染器，不归 `repl`**：需求形状是 `You: 问` / `AI: 答` 交替（`docs/00-index.md`、
+> spec §2、README 三处都画了）。非流式路径（M1）用 `write(\`AI: ${content}\`)` 一次写完；
+> 流式下正文是逐段到的，所以必须由「知道第一段正文何时到达」的渲染器来写前缀。
+> **M1 刚修好的东西（`DECISIONS.md` D15），这里漏了就会退化。**
 >
 > **每轮新建一个渲染器**，所以「`[思考中…]` 只出现一次」是天然的，不需要跨轮的标志位。
 >
@@ -1168,7 +1179,7 @@ test('text-delta 逐字写 stdout，不加换行', () => {
   renderer.onEvent({ type: 'text-delta', text: '，世界' });
   renderer.finish();
 
-  assert.equal(out.chunks.join(''), '你好，世界\n');
+  assert.equal(out.chunks.join(''), 'AI: 你好，世界\n');
   assert.deepEqual(err.chunks, []);
 });
 
@@ -1182,7 +1193,7 @@ test('首个 reasoning-delta 在 stderr 写一行指示，且只写一次', () =
   assert.equal(err.chunks.join(''), '[思考中…]\n');
   // 思考内容本身不出现
   assert.ok(!err.chunks.join('').includes('想'));
-  assert.equal(out.chunks.join(''), '答\n');
+  assert.equal(out.chunks.join(''), 'AI: 答\n');
 });
 
 test('没有 reasoning 时 stderr 完全安静', () => {
@@ -1192,7 +1203,7 @@ test('没有 reasoning 时 stderr 完全安静', () => {
   renderer.finish();
 
   assert.deepEqual(err.chunks, []);
-  assert.equal(out.chunks.join(''), '答\n');
+  assert.equal(out.chunks.join(''), 'AI: 答\n');
 });
 
 test('finish 调两次只补一个换行', () => {
@@ -1201,14 +1212,34 @@ test('finish 调两次只补一个换行', () => {
   renderer.finish();
   renderer.finish();
 
-  assert.equal(out.chunks.join(''), '答\n');
+  assert.equal(out.chunks.join(''), 'AI: 答\n');
 });
 
-test('一个字都没输出时 finish 不写任何东西', () => {
+test('整轮没有任何事件时，finish 不写任何东西（一上来就抛错的情形）', () => {
   const { out, renderer } = setup();
   renderer.finish();
 
   assert.deepEqual(out.chunks, []);
+});
+
+test('done 但整轮没有正文时，仍然写出 AI: 前缀', () => {
+  // 与 M1 的非流式路径保持一致：那边对空回答写的是 `write(\`AI: ${content}\`)`，
+  // content 为空串时同样会输出 `AI: `。两条路径的形状不能不一样。
+  const { out, renderer } = setup();
+  renderer.onEvent({ type: 'done', reason: 'stop' });
+  renderer.finish();
+
+  assert.equal(out.chunks.join(''), 'AI: \n');
+});
+
+test('前缀只写一次（多个 text-delta 不会重复前缀）', () => {
+  const { out, renderer } = setup();
+  renderer.onEvent({ type: 'text-delta', text: '一' });
+  renderer.onEvent({ type: 'text-delta', text: '二' });
+  renderer.onEvent({ type: 'text-delta', text: '三' });
+  renderer.finish();
+
+  assert.equal(out.chunks.join(''), 'AI: 一二三\n');
 });
 
 test('finish_reason 为 length 时 stderr 警告截断', () => {
@@ -1217,7 +1248,7 @@ test('finish_reason 为 length 时 stderr 警告截断', () => {
   renderer.onEvent({ type: 'done', reason: 'length' });
   renderer.finish();
 
-  assert.equal(out.chunks.join(''), '半句\n');
+  assert.equal(out.chunks.join(''), 'AI: 半句\n');
   assert.equal(err.chunks.join(''), '[警告] 回答被截断（finish_reason=length）\n');
 });
 
@@ -1236,7 +1267,7 @@ test('已输出正文但流中途失败：finish 仍补换行', () => {
   // 模拟 repl 的 catch 分支之后调用 finish
   renderer.finish();
 
-  assert.equal(out.chunks.join(''), '半截\n');
+  assert.equal(out.chunks.join(''), 'AI: 半截\n');
 });
 ```
 
@@ -1273,14 +1304,30 @@ export interface StreamRenderer {
   finish(): void;
 }
 
+/**
+ * 一轮回答在 stdout 上的前缀。
+ *
+ * 需求形状是 `You: 问` / `AI: 答` 交替（见 `docs/00-index.md`、spec §2、README）。
+ * 流式下它必须在**第一段正文之前**写出，所以由渲染器持有 ——
+ * 这正是「渲染器负责一轮长什么样」的职责。
+ */
+const ANSWER_PREFIX = 'AI: ';
+
 export function createStreamRenderer(options: {
   output: NodeJS.WritableStream;
   errorOutput: NodeJS.WritableStream;
 }): StreamRenderer {
-  // 每轮一个新的渲染器，所以这两个标志天然是「本轮」的，不需要跨轮重置
+  // 每轮一个新的渲染器，所以这些标志天然是「本轮」的，不需要跨轮重置
   let thinkingNotified = false;
-  let wroteText = false;
+  let wrotePrefix = false;
   let finished = false;
+
+  // 前缀必须恰好写出一次，且在正文之前
+  const writePrefixOnce = (): void => {
+    if (wrotePrefix) return;
+    wrotePrefix = true;
+    options.output.write(ANSWER_PREFIX);
+  };
 
   return {
     onEvent(event: StreamEvent): void {
@@ -1296,13 +1343,17 @@ export function createStreamRenderer(options: {
       }
 
       if (event.type === 'text-delta') {
-        wroteText = true;
+        writePrefixOnce();
         // 不补换行：正文是连续流动的，换行只由 finish() 统一负责
         options.output.write(event.text);
         return;
       }
 
       // done
+      // 整轮一个字都没来时也要补上前缀 —— 非流式路径对空回答同样会写出
+      // `AI: `（`write(\`AI: ${content}\`)` 里 content 是空串），
+      // 两条路径的形状必须一致，否则同一件事在流式/非流式下长得不一样。
+      writePrefixOnce();
       if (event.reason === 'length') {
         options.errorOutput.write('[警告] 回答被截断（finish_reason=length）\n');
       }
@@ -1312,8 +1363,9 @@ export function createStreamRenderer(options: {
       // 幂等：无论调用几次，只补一个换行
       if (finished) return;
       finished = true;
-      // 一个字都没输出过就不补 —— 此时当前行是空的，补了会多一个空行
-      if (wroteText) options.output.write('\n');
+      // 前缀都没写过说明本轮完全没产出（比如一上来就抛错），
+      // 此时当前行是空的，补换行只会多一个空行
+      if (wrotePrefix) options.output.write('\n');
     },
   };
 }
@@ -1322,12 +1374,12 @@ export function createStreamRenderer(options: {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node --import ./loader.mjs --test test/render.test.ts`
-Expected: PASS（8 个用例）
+Expected: PASS（10 个用例）
 
 - [ ] **Step 5: 跑全量测试确认无回归**
 
 Run: `pnpm test`
-Expected: PASS（43 + 8 = 51 个用例）
+Expected: PASS（全绿）
 
 - [ ] **Step 6: Commit**
 
@@ -1341,12 +1393,23 @@ git commit -m "feat: render StreamEvent to stdout/stderr"
 ### Task 6: repl 接入流式
 
 **Files:**
-- Modify: `demos/01-llm/src/cli/repl.ts:61-90`
+- Modify: `demos/01-llm/src/cli/repl.ts`（提问处理段；**提示符那段逻辑不要动**）
 - Test: `demos/01-llm/test/repl.test.ts`
 
 **Interfaces:**
 - Consumes: `createStreamRenderer`（Task 5）、`LLMClient.chatStream`（Task 4）
 - Produces: 无新增导出（`runRepl` 签名不变）
+
+> **只改「提问处理」那一段，不要碰循环结构。** M1 刚把循环从 `for await` 改成手写异步迭代器，
+> 为的是在**读取之前**写 `You: ` 提示符（`DECISIONS.md` D15）。本任务只把
+> `client.chat(...)` 换成 `client.chatStream(...)` + 渲染器，**提示符的写法和位置保持原样**。
+>
+> **`AI: ` 前缀不由这里写** —— 它是渲染器（Task 5）的职责。`repl` 只负责攒正文
+> （`text += ev.text`）和往 `Session` 里追加。
+>
+> **一个必须通过的验收信号**：`test/repl.test.ts` 里现有的三个逐字节断言
+> （`'You: AI: 你好\nYou: '` 等）在本任务改动后**必须继续通过**。它们是这次改动是否
+> 把 M1 修复退化的探针 —— 如果它们变红，说明前缀或提示符被弄丢了。
 
 - [ ] **Step 1: 改测试**
 
@@ -1499,7 +1562,8 @@ import { createStreamRenderer } from '@/cli/render.ts';
 import type { LLMClient } from '@/llm/client.ts';
 ```
 
-把 `for await` 循环体内的提问处理整段替换为：
+把 `while (true)` 循环体内**从 `session.append('user', question);` 到该轮 `catch` 结束**的那一段
+（即「提问处理」部分，**不含** `writePrompt()` 与 `lines.next()`）替换为：
 
 ```ts
     session.append('user', question);
@@ -1556,7 +1620,7 @@ Run: `pnpm run typecheck`
 Expected: 退出码 0
 
 Run: `pnpm test`
-Expected: PASS（51 + 3 = 54 个用例）
+Expected: PASS（全绿）
 
 - [ ] **Step 6: 手动验证分流（真实网络，需 key）**
 
@@ -1846,7 +1910,7 @@ ok 7 - test/support/helper.ts
 - [ ] **Step 8: 最终验证**
 
 Run: `pnpm run typecheck && pnpm test`
-Expected: typecheck 退出码 0；测试 54/54 通过
+Expected: typecheck 退出码 0；测试全绿
 
 Run: `grep -c '^```' HOW-IT-WORKS.md ARCHITECTURE.md DECISIONS.md README.md EVALUATION.md docs/troubleshooting.md`
 Expected: 每个文件的 ``` 数量都是偶数（围栏配平）
@@ -1867,7 +1931,7 @@ git commit -m "docs: update stage status for M2a"
 ```text
 TypeCheck: pnpm run typecheck  → 退出码 0
 Lint:      N/A（本仓库未配置 linter）
-Test:      pnpm test           → 54/54 通过
+Test:      pnpm test           → 全绿
 Build:     N/A（noEmit，无构建产物）
 冒烟:      Task 6 Step 6 —— 需用户确认后才执行；跳过则如实标注「未验证」
 ```
