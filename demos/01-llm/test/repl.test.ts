@@ -37,6 +37,10 @@ function fakeClient(answers: Array<string | Error>): LLMClient {
       if (a instanceof Error) throw a;
       return { content: a ?? '' };
     },
+    // Task 6 会把 repl 切到 chatStream；此处先补桩让类型成立
+    async *chatStream() {
+      throw new Error('not implemented yet');
+    },
   };
 }
 
@@ -137,6 +141,10 @@ test('多轮对话上下文按序累积', async () => {
     async chat(messages) {
       sent.push(messages);
       return { content: 'ok' };
+    },
+    // 同上：仅为满足 LLMClient 的类型，本用例断言的是 chat() 收到的上下文
+    async *chatStream() {
+      throw new Error('not implemented yet');
     },
   };
   const { stream, errStream } = captureOutput();
