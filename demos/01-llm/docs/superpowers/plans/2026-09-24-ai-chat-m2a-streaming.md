@@ -437,7 +437,10 @@ test('构造时带上当前模型，可读可改', () => {
 });
 ```
 
-在 `test/repl.test.ts` 里，给 4 个 `runRepl(...)` 的 options 对象各补一行 `model: 'deepseek-flash',`（放在 `prompt` 之前）。
+在 `test/repl.test.ts` 里，给**每一个** `runRepl(...)` 的 options 对象各补一行 `model: 'deepseek-flash',`（放在 `prompt` 之前）。
+
+> 数量以**实际文件为准**（`grep -c 'await runRepl(' test/repl.test.ts`，当前 **6** 个），
+> 不要照抄本计划的数字 —— 计划写在实施之前。因为 `model` 是必填字段，**漏一个就 typecheck 不过**。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -469,11 +472,23 @@ export class Session {
    *
    * 它属于「会话状态」而不是「client 配置」——`/model` 能中途切换它，
    * 每次请求再把它作为 per-call 参数传给 client。
-   *
+   */
+  private currentModel: string;
+
+  /**
    * @param model 初始模型，通常来自 `resolveConfig` 的 `config.model`
    */
-  constructor(private currentModel: string) {}
+  constructor(model: string) {
+    this.currentModel = model;
+  }
 ```
+
+> **为什么不用 TypeScript 的参数属性**（`constructor(private model: string) {}`）：
+> 本项目跑在 Node 的**原生类型擦除**（strip-only）下，没有构建步骤。参数属性需要
+> **代码变换**而非单纯擦除，运行时会直接抛
+> `SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]: TypeScript parameter property is not supported in strip-only mode`。
+> **而 `tsc --noEmit` 对它是放行的（exit 0）** —— 类型检查发现不了，只有真正运行才炸。
+> 已记入 `docs/troubleshooting.md` T11 与仓库级 `AGENTS.md`。
 
 在 `toMessages` 方法之后、类结束之前插入：
 
@@ -1976,6 +1991,82 @@ Error: ENOENT: no such file or directory, open
 
 来源：实测（2026-09-24 M2a Task 2 实施时，实现者按 brief 的期望去核对，发现期望写的是情形 A、
 实际发生的是情形 B）。
+```
+
+- [ ] **Step 6c: 在 `docs/troubleshooting.md` 追加 T11 —— TS 参数属性在 strip-only 下跑不起来**
+
+紧接着 T10 追加：
+
+```markdown
+## T11（附）TypeScript 参数属性：`tsc` 放行，运行时直接 `SyntaxError`
+
+**症状**
+
+```console
+$ node --import ./loader.mjs src/index.ts
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]:
+TypeScript parameter property is not supported in strip-only mode
+  code: 'ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX'
+```
+
+而 **`pnpm run typecheck` 报 exit 0** —— 类型检查完全放行。
+
+**原因**
+
+参数属性（constructor 参数上加 `private` / `public` / `readonly`）：
+
+```ts
+class Session {
+  constructor(private currentModel: string) {}   // ← 这行会炸
+}
+```
+
+它在 TypeScript 里需要**代码变换**（编译器要额外生成 `this.currentModel = currentModel`），
+而本项目的硬约束是「Node 原生类型擦除、**不引入构建步骤**」，剥离器只做**擦除**不做变换，
+所以遇到这个语法直接报 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。
+
+**这是本仓库最容易漏的一类坑**：`tsc` 认为它完全合法（它对），Node 认为它不受支持（它对），
+两边都不报错，只有真正运行时才炸。
+
+**解决**
+
+写成显式字段 + 构造函数里赋值，语义完全等价：
+
+```ts
+class Session {
+  private currentModel: string;
+
+  constructor(model: string) {
+    this.currentModel = model;
+  }
+}
+```
+
+**验证**
+
+`node --import ./loader.mjs src/index.ts` 能起来（不是只看 `tsc --noEmit`）。
+
+**避免**
+
+- **本仓库一律不用参数属性**，即使 `tsc` 说没问题
+- 同类语法还有 `enum`、`namespace`、实验性装饰器 —— 凡是需要**变换**而非**擦除**的 TS 特性都不能用
+- **判断标准**：把 `.ts` 里的类型标注全删掉，代码是否仍是合法 JS？是 → 能擦除；否 → 需要变换，不能用
+- **永远不要只凭 `tsc --noEmit` 通过就认为能跑** —— 类型检查与运行时是两套规则
+
+来源：实测（2026-09-24 M2a Task 3 实施时踩到：实施者按计划逐字写的 `Session` 构造函数
+在 Node 上跑不起来，改为显式赋值后通过）。同类问题见 T4。
+```
+
+- [ ] **Step 6d: 在仓库根 `AGENTS.md` 的「跨阶段技术约束」里加一条**
+
+T11 记的是「症状与解法」，但**约束本身是跨阶段的** —— 后续每个阶段都会写新的类。
+在 `AGENTS.md` 的「## 跨阶段技术约束」列表里，「**不引入构建步骤**」那一行之后插入：
+
+```markdown
+- **不用需要「代码变换」的 TS 特性**（参数属性 / `enum` / `namespace` / 实验性装饰器）——
+  原生类型擦除只做擦除不做变换。`tsc --noEmit` 对它们**放行**，只有运行时才炸
+  （见 `demos/01-llm/docs/troubleshooting.md` T11）。
+  判断标准：删掉所有类型标注后仍是合法 JS 的，才能用。
 ```
 
 - [ ] **Step 7: 改仓库根 `README.md` 的阶段目录表**
