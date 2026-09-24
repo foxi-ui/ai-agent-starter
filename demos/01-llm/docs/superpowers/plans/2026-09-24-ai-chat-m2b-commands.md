@@ -840,12 +840,12 @@ git commit -m "feat: handle slash commands in the REPL"
 `/clear` 清的是**对话内容**，不影响当前模型 —— 会话配置与对话历史是两回事。
 ```
 
-- [ ] **Step 2: 在 `DECISIONS.md` 末尾追加 D22–D24**
+- [ ] **Step 2: 在 `DECISIONS.md` 末尾追加 D23–D25**
 
 ```markdown
 ---
 
-## D22. 命令逻辑在 `core/`，打印在 `cli/`
+## D23. 命令逻辑在 `core/`，打印在 `cli/`
 
 **决策**：`core/commands.ts` 只做「解析 + 改 Session + 返回结构化结果」，
 `cli/render.ts` 负责把结果变成文字。
@@ -858,7 +858,7 @@ git commit -m "feat: handle slash commands in the REPL"
 
 ---
 
-## D23. 命令永不进入对话上下文
+## D24. 命令永不进入对话上下文
 
 **决策**：命令在 `session.append('user', …)` **之前**处理。
 
@@ -872,7 +872,7 @@ git commit -m "feat: handle slash commands in the REPL"
 
 ---
 
-## D24. 命令结果走 stdout，未知命令走 stderr
+## D25. 命令结果走 stdout，未知命令走 stderr
 
 **决策**：把 D13 的规则细化为两条线 ——
 

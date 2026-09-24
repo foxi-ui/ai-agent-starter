@@ -1641,12 +1641,12 @@ git commit -m "feat: stream responses in the REPL"
 
 并把依赖规则表里 `llm` 一行补上「`llm/sse.ts` 是纯函数，不碰 IO」。
 
-- [ ] **Step 3: 在 `DECISIONS.md` 末尾追加 D15–D21**
+- [ ] **Step 3: 在 `DECISIONS.md` 末尾追加 D16–D22**
 
 ```markdown
 ---
 
-## D15. `chatStream()` 与 `chat()` 并存，各自独立实现
+## D16. `chatStream()` 与 `chat()` 并存，各自独立实现
 
 **决策**：`LLMClient` 增加 `chatStream()`，`chat()` 保留为独立的非流式实现。
 
@@ -1661,7 +1661,7 @@ git commit -m "feat: stream responses in the REPL"
 
 ---
 
-## D16. per-call `options` 携带模型，「当前模型」存在 `Session`
+## D17. per-call `options` 携带模型，「当前模型」存在 `Session`
 
 **决策**：`chat(messages, options?)` / `chatStream(messages, options?)`，
 `options.model`；`Session` 增加 `model` getter/setter。
@@ -1677,7 +1677,7 @@ client 加可变 `setModel()`（接口有状态，多会话共享会互相污染
 
 ---
 
-## D17. `StreamEvent` 只吐三种，`usage` 推迟到 M4
+## D18. `StreamEvent` 只吐三种，`usage` 推迟到 M4
 
 **决策**：M2 只产出 `text-delta` / `reasoning-delta` / `done`。
 
@@ -1688,7 +1688,7 @@ client 加可变 `setModel()`（接口有状态，多会话共享会互相污染
 
 ---
 
-## D18. SSE 解析是纯函数 + 显式残余缓冲
+## D19. SSE 解析是纯函数 + 显式残余缓冲
 
 **决策**：`parseSse(chunk, buffer?) → { events, rest }`，无状态。
 
@@ -1704,7 +1704,7 @@ async generator 直接吃字节流（把分帧与读流揉在一起，正好把�
 
 ---
 
-## D19. `TextDecoder({ stream: true })` 在调用方解码，分帧在字符串层
+## D20. `TextDecoder({ stream: true })` 在调用方解码，分帧在字符串层
 
 **决策**：`deepseek.ts` 用 `new TextDecoder()` 配合 `decode(chunk, { stream: true })`
 逐块解码，`sse.ts` 只处理字符串。
@@ -1714,7 +1714,7 @@ async generator 直接吃字节流（把分帧与读流揉在一起，正好把�
 
 ---
 
-## D20. 一个 30s 的流空闲超时，不加开关
+## D21. 一个 30s 的流空闲超时，不加开关
 
 **决策**：`deepseek.ts` 内部一个每收到 chunk 就重置的计时器，常量 30s，
 超时主动断开连接并抛普通 `Error`。
@@ -1730,7 +1730,7 @@ async generator 直接吃字节流（把分帧与读流揉在一起，正好把�
 
 ---
 
-## D21. 思考过程走 stderr 一行指示
+## D22. 思考过程走 stderr 一行指示
 
 **决策**：首个 `reasoning-delta` 到达时往 stderr 写一行 `[思考中…]`，此后不再输出；
 思考内容本身不打印。
