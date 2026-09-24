@@ -20,8 +20,8 @@ readline 读到一行
   │         body: { model, messages }
   │       → 取 choices[0].message.content
   │
-  ├─ 成功：session.append('assistant', content) → 打印 content
-  └─ 失败：打印 [error] ... → 不 append（上下文保持干净）
+  ├─ 成功：session.append('assistant', content) → 打印 content 到 stdout
+  └─ 失败：打印 [error] ... 到 stderr → 不 append（上下文保持干净）
   │
   └─ 回到读下一行，直到输入流关闭
 ```
@@ -138,6 +138,13 @@ adapter 显式只解构 `content` 字段，因此思考过程不会进入 `Sessi
 | `fetch` 抛错（DNS / 连接拒绝） | 同上，异常向上冒泡到 REPL 的 `try/catch` |
 | 响应缺 `choices[0].message.content` | 不抛错，返回 `content: ''` |
 
+**输出去向**：模型回答走 **stdout**，错误与诊断走 **stderr**。
+因此 `pnpm start > answers.txt` 得到的文件里只有回答；
+`pnpm start 2>/dev/null` 也能单独屏蔽报错。
+
+`ReplOptions` 因此有两个输出通道（`output` / `errorOutput`），
+且都是必填字段——忘记分流会在类型检查阶段被拦下。
+
 两个细节：
 
 1. **失败的轮次不追加 assistant 消息。** `session.append('assistant', ...)` 只在
@@ -165,9 +172,10 @@ adapter 显式只解构 `content` 字段，因此思考过程不会进入 `Sessi
 | 行为 | 测试 |
 | --- | --- |
 | 消息按序累积、`system` 在最前 | `test/session.test.ts` |
-| 请求体 / 响应解析 / 401 抛错 / 空 content | `test/deepseek.test.ts`（mock `globalThis.fetch`） |
-| 一问一答、报错后继续、多轮上下文形状 | `test/repl.test.ts`（fake `LLMClient`） |
+| 请求体 / 响应解析 / 401 抛错 / 空 content / fetch 抛错 / 非 JSON 错误体 | `test/deepseek.test.ts`（mock `globalThis.fetch`） |
+| 一问一答、错误写 stderr 不污染 stdout、报错后继续、多轮上下文形状 | `test/repl.test.ts`（fake `LLMClient`） |
 | 缺 key 抛错、默认值、环境变量覆盖 | `test/config.test.ts` |
+| 缺 key 时 stderr 提示 + 退出码 1 | `test/index.test.ts`（子进程集成测试） |
 
 ```bash
 pnpm test

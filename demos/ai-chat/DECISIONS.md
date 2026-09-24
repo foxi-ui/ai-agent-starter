@@ -199,3 +199,46 @@ TypeScript 对**值导入**的 `.ts` 扩展名会直接报 `TS5097`。
 **代价**：脚本变长；`test` 也会加载 env 文件。后者对本项目无实际影响——所有测试
 都用注入的替身，不读 `process.env`，因此不依赖这两个文件。保留它是为了
 `start` 与 `test` 行为一致。
+
+---
+
+## D13. 错误输出走 stderr，与模型回答分流
+
+**决策**：`ReplOptions` 增加必填的 `errorOutput`，REPL 捕获到的错误写 stderr；
+`output`（stdout）**只承载模型回答**。`index.ts` 传入 `process.stderr`。
+
+**理由**
+
+- spec §8 明确要求「打印错误到 stderr」，而初版实现把它写进了 `output`。
+  在测试里两条通道是同一个注入流，所以**12 个用例全绿却掩盖了这个偏差**——
+  直到手动执行 `pnpm start 1>out.txt 2>err.txt` 才暴露（`out.txt` 里有报错，`err.txt` 是空的）。
+- 分流后 `pnpm start > answers.txt` 得到的文件里只有回答；
+  管道场景下也能按流分别过滤（例如 `2>/dev/null` 屏蔽诊断信息）。
+
+**代价**：`ReplOptions` 多一个必填字段，调用点与测试都要同步传参
+（生产调用点只有一个：`src/index.ts`）。
+
+**顺带记下的教训**：注入单一输出流做断言时，「写错流」这类偏差是**测不出来**的。
+把两条流都做成注入参数，才能让分流本身成为可断言的行为。
+
+**一个实测到的边界**：直接用 `pnpm start > answers.txt` 时，文件开头会有 pnpm 自己
+打印的命令横幅（那是 pnpm 的输出，不是本程序的）。要拿到真正干净的文件用
+`pnpm --silent start > answers.txt`。
+
+---
+
+## D14. 用子进程集成测试锁住退出码
+
+**决策**：新增 `test/index.test.ts`，用 `node:child_process` 真的跑一遍
+`src/index.ts`，断言「缺 key → stderr 有提示 + stdout 为空 + 退出码 1」。
+
+**理由**：退出码是**进程级**行为。`resolveConfig` 的单元测试只能断言「会抛错」，
+断言不了「进程最终以 1 退出」——把 `process.exit(1)` 改成 `throw` 或删掉 catch，
+单元测试依然全绿，而脚本和 CI 的判断依据已经坏了。
+
+**代价**：测试多起一个 Node 进程（约百毫秒），且依赖 `--import ./loader.mjs` 的路径正确。
+本用例不触网（缺 key 时程序在发起请求前就退出），因此不会让测试变慢或不稳定。
+
+**实现细节**：子进程的环境变量是「复制 `process.env` 再删掉 key」，而不是直接传 `{}`。
+因为 `pnpm test` 会加载 `.env` / `.env.local`，父进程里可能已经有真实 key，
+不显式删除就模拟不出「未配置」。

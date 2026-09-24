@@ -97,7 +97,7 @@ AI: ...
 | 命令 | 作用 |
 | --- | --- |
 | `pnpm start` | 启动 REPL |
-| `pnpm test` | 运行全部测试（`node --test`，当前 12 个用例） |
+| `pnpm test` | 运行全部测试（`node --test`，当前 16 个用例） |
 | `pnpm run typecheck` | 类型检查（`tsc --noEmit`） |
 
 命令的事实来源是 `package.json` 的 `scripts` 字段。
@@ -125,6 +125,7 @@ ai-chat/
     deepseek.test.ts
     repl.test.ts
     config.test.ts
+    index.test.ts       # 入口集成测试（子进程，验证退出码）
 ```
 
 ## 当前能力边界
@@ -133,7 +134,8 @@ ai-chat/
 
 - 非流式多轮对话，上下文在进程内存中累积
 - `system` / `user` / `assistant` 三种 role 的消息组装
-- 最小错误处理：API 报错打印后继续循环，不崩溃、不污染上下文
+- 最小错误处理：API 报错打印到 **stderr** 后继续循环，不崩溃、不污染上下文；
+  模型回答走 stdout，两条流互不干扰（`pnpm start > answers.txt` 只拿到回答）
 
 **尚未实现（后续增量）**
 
