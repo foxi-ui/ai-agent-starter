@@ -9,6 +9,7 @@
 //   stderr —— 用户没主动要的：思考指示、截断警告、错误
 
 import type { StreamEvent } from '@/core/types.ts';
+import { COMMAND_NAMES, type CommandResult } from '@/core/commands.ts';
 
 /** 一轮回答的渲染器；每轮新建一个，用完即弃 */
 export interface StreamRenderer {
@@ -87,4 +88,67 @@ export function createStreamRenderer(options: {
       if (wrotePrefix) options.output.write('\n');
     },
   };
+}
+
+/** `/history` 里每条消息最多显示多少字符 */
+const HISTORY_PREVIEW_CHARS = 200;
+
+function truncate(text: string): string {
+  if (text.length <= HISTORY_PREVIEW_CHARS) return text;
+  return `${text.slice(0, HISTORY_PREVIEW_CHARS)}…`;
+}
+
+/**
+ * 渲染命令的执行结果。
+ *
+ * 走 **stdout**：这是用户主动索要的输出，`pnpm start > answers.txt` 里
+ * 应该能看到它（与错误、思考指示这些「用户没主动要的」区分开）。
+ */
+export function renderCommandResult(
+  result: CommandResult,
+  options: { output: NodeJS.WritableStream },
+): void {
+  const write = (text: string): void => {
+    options.output.write(text + '\n');
+  };
+
+  switch (result.kind) {
+    case 'cleared':
+      write(`已清空 ${result.removed} 条消息。`);
+      return;
+
+    case 'model-current':
+      write(`当前模型：${result.model}`);
+      return;
+
+    case 'model-changed':
+      write(`已切换模型：${result.model}`);
+      return;
+
+    case 'history': {
+      if (result.messages.length === 0) {
+        write('(当前会话没有消息)');
+        return;
+      }
+      result.messages.forEach((message, index) => {
+        write(`${index + 1}. [${message.role}] ${truncate(message.content)}`);
+      });
+      return;
+    }
+  }
+}
+
+/**
+ * 渲染未知命令的提示。
+ *
+ * 走 **stderr**：这是错误，不是用户要的输出。
+ */
+export function renderUnknownCommand(
+  input: string,
+  options: { errorOutput: NodeJS.WritableStream },
+): void {
+  // 可用列表由 COMMAND_NAMES 拼出来，**不硬编码**——
+  // 硬编码的话，以后新增命令时这行提示不会跟着更新
+  const available = COMMAND_NAMES.map((name) => `/${name}`).join(' ');
+  options.errorOutput.write(`未知命令：${input}。可用：${available}\n`);
 }

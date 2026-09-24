@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Writable } from 'node:stream';
-import { createStreamRenderer } from '@/cli/render.ts';
+import {
+  createStreamRenderer,
+  renderCommandResult,
+  renderUnknownCommand,
+} from '@/cli/render.ts';
 
 function collector(): { chunks: string[]; stream: Writable } {
   const chunks: string[] = [];
@@ -119,4 +123,61 @@ test('已输出正文但流中途失败：finish 仍补换行', () => {
   renderer.finish();
 
   assert.equal(out.chunks.join(''), 'AI: 半截\n');
+});
+
+test('renderCommandResult /clear 反馈条数', () => {
+  const out = collector();
+  renderCommandResult({ kind: 'cleared', removed: 3 }, { output: out.stream });
+  assert.equal(out.chunks.join(''), '已清空 3 条消息。\n');
+});
+
+test('renderCommandResult /model 查询与切换', () => {
+  const a = collector();
+  renderCommandResult({ kind: 'model-current', model: 'deepseek-flash' }, { output: a.stream });
+  assert.equal(a.chunks.join(''), '当前模型：deepseek-flash\n');
+
+  const b = collector();
+  renderCommandResult({ kind: 'model-changed', model: 'deepseek-v4-pro' }, { output: b.stream });
+  assert.equal(b.chunks.join(''), '已切换模型：deepseek-v4-pro\n');
+});
+
+test('renderCommandResult /history 编号列出，带角色前缀', () => {
+  const out = collector();
+  renderCommandResult(
+    {
+      kind: 'history',
+      messages: [
+        { role: 'user', content: '问题' },
+        { role: 'assistant', content: '回答' },
+      ],
+    },
+    { output: out.stream },
+  );
+  assert.equal(out.chunks.join(''), '1. [user] 问题\n2. [assistant] 回答\n');
+});
+
+test('renderCommandResult /history 空会话给明确提示', () => {
+  const out = collector();
+  renderCommandResult({ kind: 'history', messages: [] }, { output: out.stream });
+  assert.equal(out.chunks.join(''), '(当前会话没有消息)\n');
+});
+
+test('renderCommandResult /history 每条截断到 200 字符', () => {
+  const out = collector();
+  const long = 'x'.repeat(250);
+  renderCommandResult(
+    { kind: 'history', messages: [{ role: 'user', content: long }] },
+    { output: out.stream },
+  );
+  const text = out.chunks.join('');
+  assert.equal(text, `1. [user] ${'x'.repeat(200)}…\n`);
+});
+
+test('renderUnknownCommand 写 stderr，可用列表来自 COMMAND_NAMES', () => {
+  const err = collector();
+  renderUnknownCommand('/foo', { errorOutput: err.stream });
+  assert.equal(
+    err.chunks.join(''),
+    '未知命令：/foo。可用：/clear /history /model\n',
+  );
 });
