@@ -31,15 +31,21 @@ function captureOutput() {
 
 function fakeClient(answers: Array<string | Error>): LLMClient {
   let i = 0;
+  const next = (): string => {
+    const a = answers[i++];
+    if (a instanceof Error) throw a;
+    return a ?? '';
+  };
+
   return {
     async chat() {
-      const a = answers[i++];
-      if (a instanceof Error) throw a;
-      return { content: a ?? '' };
+      return { content: next() };
     },
-    // Task 6 会把 repl 切到 chatStream；此处先补桩让类型成立
     async *chatStream() {
-      throw new Error('not implemented yet');
+      // 抛错要发生在 yield 之前，才能模拟「一开始就失败」
+      const content = next();
+      yield { type: 'text-delta', text: content };
+      yield { type: 'done', reason: 'stop' };
     },
   };
 }
@@ -138,13 +144,13 @@ test('非 2xx 错误不崩溃，继续下一轮', async () => {
 test('多轮对话上下文按序累积', async () => {
   const sent: Array<{ role: string; content: string }[]> = [];
   const client: LLMClient = {
-    async chat(messages) {
-      sent.push(messages);
+    async chat() {
       return { content: 'ok' };
     },
-    // 同上：仅为满足 LLMClient 的类型，本用例断言的是 chat() 收到的上下文
-    async *chatStream() {
-      throw new Error('not implemented yet');
+    async *chatStream(messages) {
+      sent.push(messages);
+      yield { type: 'text-delta', text: 'ok' };
+      yield { type: 'done', reason: 'stop' };
     },
   };
   const { stream, errStream } = captureOutput();
@@ -162,4 +168,93 @@ test('多轮对话上下文按序累积', async () => {
     { role: 'assistant', content: 'ok' },
     { role: 'user', content: '第二问' },
   ]);
+});
+
+test('正文逐字写 stdout，思考指示只写 stderr', async () => {
+  const { chunks, stream, errChunks, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream() {
+      yield { type: 'reasoning-delta', text: '想一下' };
+      yield { type: 'text-delta', text: '你' };
+      yield { type: 'text-delta', text: '好' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['hi']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+  });
+
+  const out = chunks.join('');
+  assert.ok(out.includes('你好'));
+  assert.ok(!out.includes('想一下'));
+  assert.equal(errChunks.join(''), '[思考中…]\n');
+});
+
+test('流中途失败：不追加 assistant，且补上收尾换行', async () => {
+  const sent: Array<{ role: string; content: string }[]> = [];
+  const { chunks, stream, errChunks, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream(messages) {
+      sent.push(messages);
+      yield { type: 'text-delta', text: '半截' };
+      throw new Error('流空闲超时（30s 无数据），已中断');
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['第一问', '第二问']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+  });
+
+  const out = chunks.join('');
+  // 半截答案留在了屏幕上，但补了换行（否则第二个提示符会接在后面）
+  assert.ok(out.includes('半截\n'));
+  assert.ok(errChunks.join('').includes('空闲超时'));
+
+  // 关键：第二轮的 messages 里没有那条失败的回答
+  assert.equal(sent.length, 2);
+  assert.deepEqual(sent[1], [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: '第一问' },
+    { role: 'user', content: '第二问' },
+  ]);
+});
+
+test('每轮都把当前模型作为请求参数传下去', async () => {
+  const models: Array<string | undefined> = [];
+  const { stream, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream(_messages, options) {
+      models.push(options?.model);
+      yield { type: 'text-delta', text: 'ok' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['hi']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+  });
+
+  assert.deepEqual(models, ['deepseek-flash']);
 });

@@ -6,6 +6,7 @@
 
 import { createInterface } from 'node:readline';
 import { Session } from '@/core/session.ts';
+import { createStreamRenderer } from '@/cli/render.ts';
 import type { LLMClient } from '@/llm/client.ts';
 
 /**
@@ -85,24 +86,45 @@ export async function runRepl(
       if (question === '') continue;
 
       session.append('user', question);
+
+      // 每轮新建渲染器：「[思考中…] 只出现一次」因此是天然的
+      const renderer = createStreamRenderer({
+        output: options.output,
+        errorOutput: options.errorOutput,
+      });
+
+      // 本轮正文。渲染器只呈现，累积是这里的职责 ——
+      // 因为只有攒出完整文本才能写进 Session 当上下文。
+      let text = '';
+
       try {
-        // 把「system + 目前为止的全部历史」发过去，模型据此理解上下文
-        // 每轮都把「当前模型」作为请求参数传下去
-        const result = await client.chat(session.toMessages(SYSTEM_PROMPT), {
+        // 把「system + 目前为止的全部历史」发过去，模型据此理解上下文；
+        // 当前模型随请求走，所以中途切换模型能立即生效
+        const stream = client.chatStream(session.toMessages(SYSTEM_PROMPT), {
           model: session.model,
         });
+
+        for await (const event of stream) {
+          renderer.onEvent(event);
+          if (event.type === 'text-delta') text += event.text;
+        }
+
         // 只在成功之后才记录 AI 的回答。
         // 失败时若也追加，历史里就会出现一条「伪造的回答」，
         // 下一轮模型会把它当成自己说过的话，产生自我矛盾。
-        session.append('assistant', result.content);
-        // `AI: ` 前缀与正文一起写出，且整轮只出现一次。
-        // 它只在成功路径上写 —— 失败时 stdout 不会留下一个空的 `AI: `。
-        write(`AI: ${result.content}`);
+        //
+        // 注意：流中途失败时屏幕上会留下半截回答，但它**不会**进入上下文。
+        // 「屏幕上看到的」与「模型记得的」是两回事。
+        session.append('assistant', text);
       } catch (error) {
         // 最小错误处理：打印错误后继续循环。
         // 不崩溃，也不污染上下文——失败的轮次不留 assistant 消息。
         // 走 stderr：stdout 只留给模型回答，重定向时不被诊断信息污染。
         writeError(`[error] ${(error as Error).message}`);
+      } finally {
+        // 无论正常还是异常结束都收尾：保证正文后有且只有一个换行，
+        // 否则下一次提示符会接在半句话后面
+        renderer.finish();
       }
     }
   } finally {
