@@ -1697,7 +1697,21 @@ git commit -m "feat: stream responses in the REPL"
 
 - [ ] **Step 2: 改 `ARCHITECTURE.md` 的模块职责表**
 
-在表格中 `src/llm/deepseek.ts` 一行之后插入：
+**先把已有的 `types.ts` 一行更新掉**（否则本次新增的三个类型在文档里完全没有落点）：
+
+把：
+
+```markdown
+| `src/core/types.ts` | core | `Role` / `Message` / `ChatResult` 类型定义 | 行为 |
+```
+
+替换为：
+
+```markdown
+| `src/core/types.ts` | core | `Role` / `Message` / `ChatResult` / `StreamEvent` / `FinishReason` / `ChatOptions` 类型定义 | 行为 |
+```
+
+**再**在表格中 `src/llm/deepseek.ts` 一行之后插入：
 
 ```markdown
 | `src/llm/sse.ts` | llm | SSE 分帧（纯函数，只懂协议不懂 DeepSeek） | 网络、解码、事件语义 |
@@ -1820,9 +1834,23 @@ async generator 直接吃字节流（把分帧与读流揉在一起，正好把�
 
 把「尚未实现」列表里的 `streaming（SSE 解析）` 一行删掉。
 
-把「常用命令」表的测试数量更新为实际值（执行后以 `pnpm test` 输出为准，Task 6 结束时是 **54**）。
+把「常用命令」表的测试数量更新为**执行后 `pnpm test` 的实际输出值**（不要照抄计划里的数字 —— 计划写在实施之前，用例数会变）。
 
-并在「项目结构」的 `src/` 清单里插入：
+在「项目结构」的 `src/` 清单里改两处：
+
+把已有的：
+
+```text
+    core/types.ts       # Message / Role / ChatResult 类型
+```
+
+替换为：
+
+```text
+    core/types.ts       # Message / Role / ChatResult / StreamEvent / ChatOptions 类型
+```
+
+**再**插入两个新文件：
 
 ```text
     cli/render.ts       # StreamEvent → stdout/stderr
