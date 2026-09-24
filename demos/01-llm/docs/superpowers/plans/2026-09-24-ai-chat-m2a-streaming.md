@@ -1321,7 +1321,10 @@ test('已输出正文但流中途失败：finish 仍补换行', () => {
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `node --import ./loader.mjs --test test/render.test.ts`
-Expected: FAIL —— `Cannot find package '@/cli'` 指向的 `render.ts` 不存在
+Expected: FAIL —— **`ENOENT: no such file or directory, open '<绝对路径>/src/cli/render.ts'`**（`code: 'ENOENT'`）
+
+> 不是 `Cannot find package`：loader 的 resolve 钩子把 `@/` 映射成绝对 file URL 并 shortCircuit，
+> 解析成功、失败点后移到 load 阶段。详见 T10 与 Task 2 Step 2 的说明。
 
 - [ ] **Step 3: 实现 `src/cli/render.ts`**
 
