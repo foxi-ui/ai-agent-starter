@@ -6,6 +6,7 @@
 
 ## 项目简介
 
+## 阶段一：基础能力 LLM
 ### 基础能力：
 
 ```text
@@ -39,7 +40,7 @@ error handling
 token statistics
 ```
 
-## 实践完成有本人会掌握以下知识
+### 实践完成有本人会掌握以下知识
 
 ```text
 LLM API
@@ -53,4 +54,29 @@ Streaming
 错误处理
    ↓
 Token 统计
+```
+
+### 最终设计文档
+[文档](01-full-design.md)
+
+## 阶段2: LLM + MCP
+自己实现一个最简单的 Agent。
+参考：
+### 需求概要
+
+```
+用户：
+北京今天天气怎么样？
+
+Agent：
+需要天气工具
+
+Tool Call：
+weather("Beijing")
+
+Tool Result：
+25°C, Sunny
+
+Final：
+北京今天 25°C，晴天。
 ```

@@ -1,0 +1,568 @@
+<title>模型怎么调工具</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+
+<style>
+  :root {
+    --ground:      #F4F5F7;
+    --surface:     #FFFFFF;
+    --surface-sunk:#EDEFF3;
+    --ink:         #191C22;
+    --ink-soft:    #5B6270;
+    --ink-faint:   #8A92A0;
+    --line:        #DCE0E7;
+    --line-strong: #C2C8D2;
+
+    /* 中性：system（每次现加）与 user（人说的话）刻意用无色相 */
+    --system:      #707A8A;
+    --system-bg:   #E7EAEF;
+    --user:        #40454F;
+    --user-bg:     #F2F4F7;
+
+    /* 靛蓝：模型（assistant）—— 推理与最终回答 */
+    --llm:         #3D50B4;
+    --llm-bg:      #E7EAFB;
+
+    /* 青绿：工具（tool）—— 程序真正执行的那一步 */
+    --tool:        #0E7C66;
+    --tool-bg:     #DFF1EC;
+
+    --accent:      #3D50B4;
+    --warn:        #A63B3B;
+    --warn-bg:     #FAEBEB;
+    --shadow:      0 1px 2px rgba(20, 24, 33, .06), 0 4px 12px rgba(20, 24, 33, .05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground:      #11141A;
+      --surface:     #191D25;
+      --surface-sunk:#151920;
+      --ink:         #E7EAF0;
+      --ink-soft:    #9BA3B2;
+      --ink-faint:   #737C8C;
+      --line:        #2B313C;
+      --line-strong: #3C4350;
+
+      --system:      #98A1B0;
+      --system-bg:   #232833;
+      --user:        #C6CCD6;
+      --user-bg:     #1B1F27;
+
+      --llm:         #93A2F0;
+      --llm-bg:      #1F2540;
+
+      --tool:        #5BC4A8;
+      --tool-bg:     #12291F;
+
+      --accent:      #93A2F0;
+      --warn:        #E89393;
+      --warn-bg:     #35201F;
+      --shadow:      0 1px 2px rgba(0, 0, 0, .4), 0 4px 14px rgba(0, 0, 0, .3);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground:      #11141A;
+    --surface:     #191D25;
+    --surface-sunk:#151920;
+    --ink:         #E7EAF0;
+    --ink-soft:    #9BA3B2;
+    --ink-faint:   #737C8C;
+    --line:        #2B313C;
+    --line-strong: #3C4350;
+
+    --system:      #98A1B0;
+    --system-bg:   #232833;
+    --user:        #C6CCD6;
+    --user-bg:     #1B1F27;
+
+    --llm:         #93A2F0;
+    --llm-bg:      #1F2540;
+
+    --tool:        #5BC4A8;
+    --tool-bg:     #12291F;
+
+    --accent:      #93A2F0;
+    --warn:        #E89393;
+    --warn-bg:     #35201F;
+    --shadow:      0 1px 2px rgba(0, 0, 0, .4), 0 4px 14px rgba(0, 0, 0, .3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'Noto Sans SC', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-size: 16px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 940px;
+    margin: 0 auto;
+    padding-block: 56px 96px;
+    padding-inline: 20px;
+  }
+
+  .prose { max-width: 65ch; }
+
+  h1, h2, h3 {
+    font-family: 'Bricolage Grotesque', 'Noto Sans SC', system-ui, sans-serif;
+    text-wrap: balance;
+    line-height: 1.25;
+    margin: 0;
+  }
+
+  h1 { font-size: clamp(2rem, 5.5vw, 3.1rem); font-weight: 800; letter-spacing: -0.02em; margin-bottom: 18px; }
+  h2 { font-size: clamp(1.3rem, 3vw, 1.6rem); font-weight: 700; letter-spacing: -0.01em; margin-bottom: 14px; }
+  h3 { font-size: 1.02rem; font-weight: 700; margin-bottom: 8px; }
+
+  p { margin: 0 0 16px; }
+
+  .lede { font-size: 1.12rem; color: var(--ink-soft); max-width: 60ch; }
+
+  section { margin-top: 64px; padding-top: 40px; border-top: 1px solid var(--line); }
+  section:first-of-type { border-top: 0; padding-top: 0; margin-top: 48px; }
+
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 10px;
+  }
+
+  code {
+    font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 0.88em; background: var(--surface-sunk); border: 1px solid var(--line);
+    border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+  }
+
+  strong { font-weight: 700; }
+  .hl { color: var(--accent); font-weight: 700; }
+
+  .thesis {
+    background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0; padding: 20px 24px; margin-top: 28px; box-shadow: var(--shadow);
+  }
+  .thesis p:last-child { margin-bottom: 0; }
+
+  figure {
+    margin: 30px 0 0; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 24px 20px 16px; box-shadow: var(--shadow);
+  }
+  figure svg { display: block; width: 100%; height: auto; max-width: 100%; }
+
+  figcaption {
+    margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line);
+    font-size: 0.86rem; color: var(--ink-soft); line-height: 1.6;
+  }
+
+  .flow { display: flex; flex-direction: column; gap: 0; margin-top: 6px; }
+  .step { display: grid; grid-template-columns: 30px 1fr; gap: 14px; align-items: start; padding: 13px 0; }
+  .step + .step { border-top: 1px solid var(--line); }
+  .step-n { font-family: 'JetBrains Mono', monospace; font-size: 0.74rem; font-weight: 600; color: var(--ink-faint); padding-top: 3px; }
+  .step-what { font-weight: 500; }
+  .step-code { display: block; margin-top: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--ink-soft); white-space: nowrap; overflow-x: auto; }
+  .step-where { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--ink-faint); letter-spacing: 0.03em; }
+
+  /* 消息单元（核心可视化） */
+  .arr { display: flex; flex-wrap: wrap; gap: 7px; align-items: stretch; }
+  .msg {
+    display: flex; flex-direction: column; gap: 2px; border: 1px solid; border-radius: 7px;
+    padding: 5px 9px 6px; font-size: 0.82rem; line-height: 1.45; min-width: 0;
+  }
+  .msg-role { font-family: 'JetBrains Mono', monospace; font-size: 0.61rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.85; }
+  .msg-body { font-family: 'Noto Sans SC', sans-serif; }
+  .msg-mono { font-family: 'JetBrains Mono', monospace; font-size: 0.74rem; opacity: 0.9; }
+
+  .msg--system { border-color: var(--line-strong); border-style: dashed; background: var(--system-bg); color: var(--system); }
+  .msg--user   { border-color: var(--line-strong); background: var(--user-bg); color: var(--user); }
+  .msg--llm    { border-color: var(--llm); background: var(--llm-bg); color: var(--llm); }
+  .msg--tool   { border-color: var(--tool); background: var(--tool-bg); color: var(--tool); }
+
+  /* 轮次抽屉 */
+  .turn { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--surface); }
+  .turn-head {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 9px 14px;
+    background: var(--surface-sunk); border-bottom: 1px solid var(--line); font-size: 0.8rem;
+  }
+  .turn-title { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 0.76rem; letter-spacing: 0.03em; }
+  .turn-note { color: var(--ink-faint); font-size: 0.76rem; }
+  .turn-body { padding: 14px; }
+
+  .between {
+    display: flex; align-items: center; gap: 10px; padding: 12px 4px;
+    color: var(--ink-faint); font-size: 0.79rem; font-family: 'JetBrains Mono', monospace;
+  }
+  .between::before { content: ""; width: 2px; height: 16px; background: var(--line-strong); flex: none; margin-left: 10px; }
+
+  .bracket {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; padding-top: 12px;
+    border-top: 1px dashed var(--line); font-size: 0.79rem; color: var(--ink-soft);
+  }
+
+  .tag {
+    display: inline-flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; padding: 3px 8px; border-radius: 999px; border: 1px solid;
+  }
+  .tag--sys  { border-color: var(--line-strong); color: var(--system); background: var(--system-bg); border-style: dashed; }
+  .tag--user { border-color: var(--line-strong); color: var(--user); background: var(--user-bg); }
+  .tag--llm  { border-color: var(--llm); color: var(--llm); background: var(--llm-bg); }
+  .tag--tool { border-color: var(--tool); color: var(--tool); background: var(--tool-bg); }
+
+  /* 兜底三问 */
+  .qa { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 26px; }
+  .qa-item { background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 16px 18px; }
+  .qa-q { font-family: 'Bricolage Grotesque', 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 0.95rem; margin-bottom: 6px; }
+  .qa-a { font-size: 0.88rem; color: var(--ink-soft); margin: 0; }
+  .qa-a code { font-size: 0.82em; }
+
+  /* 文件表 */
+  .files { width: 100%; border-collapse: collapse; margin-top: 22px; font-size: 0.85rem; }
+  .files th, .files td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .files th { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  .files td:first-child { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; white-space: nowrap; color: var(--accent); }
+  .scroll-x { overflow-x: auto; }
+
+  /* 接缝对比 */
+  .modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 24px; }
+  .mode { border: 1px solid var(--line); border-radius: 9px; padding: 15px 17px; background: var(--surface); }
+  .mode--llm  { border-left: 3px solid var(--llm); }
+  .mode--tool { border-left: 3px solid var(--tool); }
+  .mode-head { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; font-weight: 600; margin-bottom: 7px; }
+  .mode--llm  .mode-head { color: var(--llm); }
+  .mode--tool .mode-head { color: var(--tool); }
+  .mode-body { font-size: 0.86rem; color: var(--ink-soft); margin: 0; }
+  .mode-body code { font-size: 0.82em; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); font-size: 0.8rem; color: var(--ink-soft); }
+  .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 22px; height: 10px; border-radius: 3px; flex: none; }
+  .swatch--llm  { background: var(--llm); }
+  .swatch--tool { background: var(--tool); }
+
+  a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+  footer { margin-top: 72px; padding-top: 24px; border-top: 1px solid var(--line); font-size: 0.82rem; color: var(--ink-faint); }
+
+  @media (max-width: 520px) {
+    .wrap { padding-block: 36px 64px; }
+    section { margin-top: 48px; padding-top: 32px; }
+    figure { padding: 18px 14px 14px; }
+    .step-code { white-space: normal; word-break: break-all; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">ai-chat-agent · Agent 循环是怎么工作的</div>
+    <h1>模型不会调工具</h1>
+    <p class="lede">
+      你想知道「北京天气」，可模型没法上网。它不是自己去查天气，而是输出一张
+      <strong>调用单</strong>——要调哪个函数、传什么参数。真正执行函数、把结果喂回去的，是你的程序。
+    </p>
+
+    <div class="thesis">
+      <p>
+        所谓 Agent，不是「AI 会自己动手」，而是：
+        <strong>模型输出 <code>tool_calls</code>（调用意图），你的程序执行工具、把结果回喂，再让模型据此作答。</strong>
+      </p>
+      <p>
+        这个「调 → 执行 → 回喂 → 再调」的循环，就是 Agent 的全部。
+        下面所有图，画的都是<strong>同一个循环</strong>。
+      </p>
+    </div>
+  </header>
+
+  <!-- ─────────── 1. 循环骨架 ─────────── -->
+  <section>
+    <div class="eyebrow">第一步</div>
+    <h2>一轮对话 = 一个循环</h2>
+    <p class="prose">
+      以前（阶段一）一轮对话只调<strong>一次</strong>模型。现在模型可能先回一句
+      「我要调 <code>weather</code>」，你的程序就得多跑几趟——每跑一趟，要么执行工具、要么得到答案。
+      循环的出口只有一个：模型不再要工具了。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 660 430" role="img" aria-label="Agent 循环流程图：messages 数组经过 chat 调用后进入判断，若没有 tool_calls 则直接得到最终答案并打印；若有则执行工具、把结果回喂，再回到 chat 重发">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- 数组 -->
+        <rect x="170" y="16" width="190" height="40" rx="8" fill="currentColor" opacity="0.07"/>
+        <text x="265" y="41" text-anchor="middle" font-size="13" font-family="monospace" fill="currentColor">messages 数组</text>
+
+        <!-- chat -->
+        <line x1="265" y1="56" x2="265" y2="84" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah)"/>
+        <rect x="170" y="86" width="190" height="46" rx="8" fill="none" stroke="currentColor" stroke-width="1.9"/>
+        <text x="265" y="105" text-anchor="middle" font-size="12" font-family="monospace" font-weight="600" fill="currentColor">chat(messages, {tools})</text>
+        <text x="265" y="122" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.6">调 LLM，附工具声明</text>
+
+        <!-- 判断 -->
+        <line x1="265" y1="132" x2="265" y2="156" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah)"/>
+        <polygon points="265,158 339,196 265,234 191,196" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <text x="265" y="192" text-anchor="middle" font-size="12" font-family="monospace" font-weight="600" fill="currentColor">有</text>
+        <text x="265" y="206" text-anchor="middle" font-size="12" font-family="monospace" font-weight="600" fill="currentColor">tool_calls?</text>
+
+        <!-- No 分支 -->
+        <line x1="339" y1="196" x2="455" y2="196" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah)"/>
+        <text x="397" y="188" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7">No</text>
+        <rect x="460" y="173" width="190" height="46" rx="8" fill="none" stroke="currentColor" stroke-width="1.9"/>
+        <text x="555" y="192" text-anchor="middle" font-size="12" font-family="monospace" font-weight="600" fill="currentColor">content 最终答案</text>
+        <text x="555" y="209" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.6">finish_reason=stop</text>
+        <line x1="555" y1="219" x2="555" y2="248" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah)"/>
+        <text x="555" y="266" text-anchor="middle" font-size="12" fill="currentColor" opacity="0.75">打印 · 本轮结束</text>
+
+        <!-- Yes 分支 -->
+        <line x1="265" y1="234" x2="265" y2="270" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah)"/>
+        <text x="285" y="254" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7">Yes</text>
+        <rect x="170" y="272" width="190" height="46" rx="8" fill="none" stroke="currentColor" stroke-width="1.9"/>
+        <text x="265" y="291" text-anchor="middle" font-size="12" font-family="monospace" font-weight="600" fill="currentColor">execute(name, args)</text>
+        <text x="265" y="308" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.6">程序真正执行函数</text>
+
+        <line x1="265" y1="318" x2="265" y2="342" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah)"/>
+        <rect x="170" y="344" width="190" height="46" rx="8" fill="currentColor" opacity="0.05"/>
+        <text x="265" y="363" text-anchor="middle" font-size="12" font-family="monospace" font-weight="600" fill="currentColor">append 一条 tool 消息</text>
+        <text x="265" y="380" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.6">把结果写回数组</text>
+
+        <!-- 回环 -->
+        <path d="M 170 367 L 66 367 L 66 109 L 168 109" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+        <text x="50" y="238" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7" transform="rotate(-90 50 238)">再发一次（带上工具结果）</text>
+      </svg>
+      <figcaption>
+        出口只有一条（右侧 <code>No</code>）。模型每次都说「我要调工具」，就沿左侧虚线绕回来再发一次。
+        这也就是为什么必须设 <code>maxSteps</code> 上限——否则一个反复要工具的模型会让这个循环永不退出。
+      </figcaption>
+    </figure>
+
+    <figure>
+      <div class="flow">
+        <div class="step">
+          <div class="step-n">01</div>
+          <div><div class="step-what">读到一行，先存进数组</div>
+            <span class="step-code">session.append('user', question)</span>
+            <span class="step-where">src/cli/repl.ts</span></div>
+        </div>
+        <div class="step">
+          <div class="step-n">02</div>
+          <div><div class="step-what">发起一次带工具声明的请求</div>
+            <span class="step-code">client.chat(messages, { tools: registry.list() })</span>
+            <span class="step-where">src/core/agent.ts → src/llm/deepseek.ts</span></div>
+        </div>
+        <div class="step">
+          <div class="step-n">03</div>
+          <div><div class="step-what">看结果：有没有 tool_calls？</div>
+            <span class="step-code">if (result.tool_calls?.length)</span>
+            <span class="step-where">src/core/agent.ts</span></div>
+        </div>
+        <div class="step">
+          <div class="step-n">04</div>
+          <div><div class="step-what">有 —— 程序执行工具，结果回喂</div>
+            <span class="step-code">registry.execute(name, args) → 追加 tool 消息 → 回到 02</span>
+            <span class="step-where">src/core/agent.ts → src/tools/*</span></div>
+        </div>
+        <div class="step">
+          <div class="step-n">05</div>
+          <div><div class="step-what">没有 —— 拿到最终答案，打印</div>
+            <span class="step-code">session.appendAll(added); write(final.content)</span>
+            <span class="step-where">src/cli/repl.ts</span></div>
+        </div>
+      </div>
+      <figcaption>
+        01 到 05 里，真正「做了点现实世界的事」的只有 04 —— 那一次
+        <code>registry.execute(...)</code>。其余都是在为这一次函数调用服务：准备参数、回喂结果、整理答案。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ─────────── 2. 天气例子：数组怎么变长 ─────────── -->
+  <section>
+    <div class="eyebrow">第二步 · 关键</div>
+    <h2>天气例子：数组在两次请求间怎么变长</h2>
+    <p class="prose">
+      和阶段一一样，「记忆」仍只是一个数组。区别是现在一轮里，数组里会多出两类新消息——
+      <strong>模型开出的调用单</strong>和<strong>程序填回的执行结果</strong>。颜色表示角色：
+      <span class="tag tag--sys">system</span>
+      <span class="tag tag--user">user</span>
+      <span class="tag tag--llm">assistant（模型）</span>
+      <span class="tag tag--tool">tool（工具）</span>
+    </p>
+
+    <div class="turn">
+      <div class="turn-head">
+        <span class="turn-title">第 1 次 chat 发出去</span>
+        <span class="turn-note">用户输入：北京今天天气怎么样？</span>
+      </div>
+      <div class="turn-body">
+        <div class="arr">
+          <div class="msg msg--system"><span class="msg-role">system</span><span class="msg-body">你是 CLI AI 助手，需要时可调工具…</span></div>
+          <div class="msg msg--user"><span class="msg-role">user</span><span class="msg-body">北京今天天气怎么样？</span></div>
+        </div>
+        <div class="bracket"><span class="tag tag--sys">system 每次现加</span><span class="tag tag--user">数组里只有 1 条</span></div>
+      </div>
+    </div>
+
+    <div class="between">↓ 模型返回 finish_reason="tool_calls" —— 它没回答，它开了一张调用单</div>
+
+    <div class="turn">
+      <div class="turn-head">
+        <span class="turn-title">数组此时 · 第 2 次 chat 发出去的内容</span>
+        <span class="turn-note">两条新消息是程序追加的</span>
+      </div>
+      <div class="turn-body">
+        <div class="arr">
+          <div class="msg msg--system"><span class="msg-role">system</span><span class="msg-body">你是 CLI AI 助手，需要时可调工具…</span></div>
+          <div class="msg msg--user"><span class="msg-role">user</span><span class="msg-body">北京今天天气怎么样？</span></div>
+          <div class="msg msg--llm">
+            <span class="msg-role">assistant · tool_calls</span>
+            <span class="msg-mono">weather({ "city": "Beijing" })</span>
+          </div>
+          <div class="msg msg--tool">
+            <span class="msg-role">tool · call_1</span>
+            <span class="msg-mono">25°C, Sunny</span>
+          </div>
+        </div>
+        <div class="bracket">
+          <span class="tag tag--llm">模型开的调用单</span>
+          <span class="tag tag--tool">程序执行后填回的结果</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="between">↓ 模型看到结果，返回 finish_reason="stop" + 最终回答</div>
+
+    <div class="turn">
+      <div class="turn-head">
+        <span class="turn-title">数组最终 · 本轮结束</span>
+        <span class="turn-note">最终回答也进数组，供下一轮引用</span>
+      </div>
+      <div class="turn-body">
+        <div class="arr">
+          <div class="msg msg--system"><span class="msg-role">system</span><span class="msg-body">你是 CLI AI 助手…</span></div>
+          <div class="msg msg--user"><span class="msg-role">user</span><span class="msg-body">北京今天天气怎么样？</span></div>
+          <div class="msg msg--llm"><span class="msg-role">assistant · tool_calls</span><span class="msg-mono">weather("Beijing")</span></div>
+          <div class="msg msg--tool"><span class="msg-role">tool · call_1</span><span class="msg-mono">25°C, Sunny</span></div>
+          <div class="msg msg--llm"><span class="msg-role">assistant</span><span class="msg-body">北京今天 25°C，晴天。</span></div>
+        </div>
+        <div class="bracket">
+          <span class="tag tag--llm">最终回答也是 assistant</span>
+          <span class="tag tag--tool">整段工具痕迹都留在历史里</span>
+        </div>
+      </div>
+    </div>
+
+    <figure>
+      <figcaption style="margin-top:0; padding-top:0; border-top:0;">
+        关键区别：<strong>模型从头到尾没有「调」过任何函数</strong>。它只输出了
+        <code>tool_calls</code> 里那串文字，是程序读懂了它、去执行了 <code>weather</code>，
+        再把 <code>25°C, Sunny</code> 当成一条新消息塞回数组。模型第二轮的「知道天气」，
+        同样来自<strong>你重新发了一遍数组</strong>。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ─────────── 3. 兜底三问 ─────────── -->
+  <section>
+    <div class="eyebrow">第三步</div>
+    <h2>循环里的三个兜底</h2>
+    <div class="qa">
+      <div class="qa-item">
+        <div class="qa-q">工具执行出错了怎么办？</div>
+        <p class="qa-a">
+          不崩溃。把错误文本当作那条 <code>tool</code> 消息的 <code>content</code> 回喂给模型，
+          让模型看到「工具报错了」后自行换个参数或改口。
+          <code>arguments</code> 是非法 JSON 时同理。
+        </p>
+      </div>
+      <div class="qa-item">
+        <div class="qa-q">模型一直要调工具呢？</div>
+        <p class="qa-a">
+          <code>maxSteps</code>（默认 6）给循环设了上限。跑满仍没收敛，就追加一条
+          「已达最大步数」并停止。这就是「Agent 为什么会无限循环」的答案——<strong>必须有界</strong>。
+        </p>
+      </div>
+      <div class="qa-item">
+        <div class="qa-q">请求失败会污染历史吗？</div>
+        <p class="qa-a">
+          不会。工具消息和最终回答只在 <code>runAgentTurn</code> <strong>成功返回后</strong>
+          才一次性写进 <code>Session</code>。中途失败，本轮只留下 <code>user</code> 那一条。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── 4. 对照：文件 ─────────── -->
+  <section>
+    <div class="eyebrow">对照</div>
+    <h2>每个文件负责哪一步</h2>
+    <div class="scroll-x">
+      <table class="files">
+        <thead><tr><th>文件</th><th>负责什么</th><th>在上面哪一步</th></tr></thead>
+        <tbody>
+          <tr><td>src/core/types.ts</td><td>定义 <code>Message</code>（含 tool 角色）、<code>ToolCall</code>、<code>Tool</code> —— 契约</td><td>数组元素 + 工具声明的形状</td></tr>
+          <tr><td>src/core/tool-registry.ts</td><td><code>ToolRegistry</code> 接口：<code>list()</code> / <code>execute()</code></td><td>工具接缝的契约</td></tr>
+          <tr><td>src/core/agent.ts</td><td><code>runAgentTurn</code> 循环：调 → 判断 → 执行 → 回喂，含 <code>maxSteps</code></td><td>02 / 03 / 04 整张循环</td></tr>
+          <tr><td>src/core/session.ts</td><td>维护数组：<code>appendMessage</code> / <code>appendAll</code> / <code>toMessages</code></td><td>01 / 05</td></tr>
+          <tr><td>src/tools/*</td><td><code>weather</code> / <code>get_time</code> / <code>calculator</code> 的具体实现</td><td>04 的落地</td></tr>
+          <tr><td>src/llm/deepseek.ts</td><td>发 <code>tools</code>、解析 <code>tool_calls</code> / <code>finish_reason</code></td><td>02 那一次 fetch</td></tr>
+          <tr><td>src/cli/repl.ts</td><td>每轮调 <code>runAgentTurn</code>、打印、报错</td><td>01 / 05</td></tr>
+          <tr><td>src/index.ts</td><td>组装 client + registry 注入</td><td>循环开始前</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose" style="margin-top:26px;">
+      一句话：<strong>除了 <code>Session</code> 里那个数组，没有任何东西在「记住」这轮对话</strong>；
+      而「动手」这件事，也只发生在 <code>src/tools/*</code> 里那几个函数里。
+    </p>
+  </section>
+
+  <!-- ─────────── 5. 两个接缝 ─────────── -->
+  <section>
+    <div class="eyebrow">关联知识</div>
+    <h2>两个接缝，都能换成假的</h2>
+    <p class="prose">
+      阶段一只有 <code>LLMClient</code> 一个接缝。阶段二多了 <code>ToolRegistry</code>。
+      两者都通过 <code>index.ts</code> 注入，于是<strong>整个 Agent 循环都能在没有网络、没有 API key 的情况下断言</strong>——
+      测试里塞一个「先说 tool_calls、再给答案」的假 client 和一个「返回 <code>25°C, Sunny</code>」的假 registry 即可。
+    </p>
+
+    <div class="modes">
+      <div class="mode mode--llm">
+        <div class="mode-head">LLMClient · 模型接缝</div>
+        <p class="mode-body">
+          <code>chat(messages, { tools }) → ChatResult</code>。
+          测试替身：一个返回固定 <code>tool_calls</code> 或 <code>content</code> 的函数。
+        </p>
+      </div>
+      <div class="mode mode--tool">
+        <div class="mode-head">ToolRegistry · 工具接缝</div>
+        <p class="mode-body">
+          <code>list() / execute(name, args)</code>。接口在 <code>core/</code>、实现在 <code>tools/</code>；
+          将来接 MCP 只给实现加 <code>mount()</code>，接口与 <code>core</code> 都不用动。
+        </p>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span class="legend-item"><span class="swatch swatch--llm"></span> 模型侧（assistant / LLMClient）</span>
+      <span class="legend-item"><span class="swatch swatch--tool"></span> 工具侧（tool / ToolRegistry）</span>
+    </div>
+  </section>
+
+  <footer>
+    ai-chat-agent · 阶段二 Tool Calling · 源码见 <code>demos/02-agent/src/</code>
+  </footer>
+
+</div>

@@ -105,7 +105,7 @@ AI: ...
 ## 项目结构
 
 ```text
-ai-chat/
+01-llm/                 # 目录名 = 阶段槽位；项目名 ai-chat
   package.json          # type: module；scripts: start / test / typecheck
   tsconfig.json         # strict；noEmit；module: nodenext；@/ 路径别名
   .env                  # 环境变量模板（仅占位符，随仓库提交）

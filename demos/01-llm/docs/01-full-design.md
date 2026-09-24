@@ -89,7 +89,7 @@ llm/     DeepSeek adapter、SSE 解析、StreamEvent 归一化、HTTP 错误映�
 ### 完整目录结构
 
 ```text
-demos/ai-chat/
+demos/01-llm/
   package.json          # type: module；scripts: start / test / typecheck
   tsconfig.json         # strict；noEmit；module: nodenext
   src/

@@ -8,18 +8,18 @@
 
 **Tech Stack:** Node 22（原生 TS 类型擦除）、pnpm（包管理器）、TypeScript（`tsc --noEmit` 做类型检查）、`node --test`、原生 `fetch`、`node:readline`。零运行时依赖；devDependency 仅 `typescript` + `@types/node`。
 
-**Spec:** `demos/ai-chat/docs/superpowers/specs/2026-09-23-ai-chat-design.md`
+**Spec:** `demos/01-llm/docs/superpowers/specs/2026-09-23-ai-chat-design.md`
 
 ## Global Constraints
 
 - Node ≥ 22（依赖原生类型擦除直接运行 `.ts`）
 - 零运行时依赖；devDependency 仅 `typescript`、`@types/node`
 - ESM：`package.json` `"type": "module"`
-- 目录：`demos/ai-chat/` 为项目根，代码在 `src/`，测试在 `test/`
+- 目录：`demos/01-llm/` 为项目根，代码在 `src/`，测试在 `test/`
 - 分层依赖单向：`cli → core → llm`；`llm`/`core` 不 import `node:readline`、不写 `process.stdout`
 - 环境变量：`DEEPSEEK_API_KEY`（必需）、`DEEPSEEK_BASE_URL`（可选，默认 `https://api.deepseek.com`）、`AI_CHAT_MODEL`（可选，默认 `deepseek-flash`）
 - 密钥只经环境变量注入，禁止写进代码
-- 所有验证命令在 `demos/ai-chat/` 目录下执行
+- 所有验证命令在 `demos/01-llm/` 目录下执行
 
 ## Review Focus
 
@@ -38,9 +38,9 @@
 ### Task 1: 项目脚手架与类型定义
 
 **Files:**
-- Create: `demos/ai-chat/package.json`
-- Create: `demos/ai-chat/tsconfig.json`
-- Create: `demos/ai-chat/src/core/types.ts`
+- Create: `demos/01-llm/package.json`
+- Create: `demos/01-llm/tsconfig.json`
+- Create: `demos/01-llm/src/core/types.ts`
 
 **Interfaces:**
 - Consumes: 无（首个任务）
@@ -122,7 +122,7 @@ git commit -m "chore: scaffold ai-chat project with types"
 ### Task 2: LLMClient 接口
 
 **Files:**
-- Create: `demos/ai-chat/src/llm/client.ts`
+- Create: `demos/01-llm/src/llm/client.ts`
 
 **Interfaces:**
 - Consumes: `Message`（来自 `../core/types.ts`）
@@ -165,8 +165,8 @@ git commit -m "feat: define LLMClient interface"
 ### Task 3: Session 会话状态
 
 **Files:**
-- Create: `demos/ai-chat/src/core/session.ts`
-- Test: `demos/ai-chat/test/session.test.ts`
+- Create: `demos/01-llm/src/core/session.ts`
+- Test: `demos/01-llm/test/session.test.ts`
 
 **Interfaces:**
 - Consumes: `Message`、`Role`（来自 `./types.ts`）
@@ -244,8 +244,8 @@ git commit -m "feat: add session message accumulation"
 ### Task 4: DeepSeek adapter
 
 **Files:**
-- Create: `demos/ai-chat/src/llm/deepseek.ts`
-- Test: `demos/ai-chat/test/deepseek.test.ts`
+- Create: `demos/01-llm/src/llm/deepseek.ts`
+- Test: `demos/01-llm/test/deepseek.test.ts`
 
 **Interfaces:**
 - Consumes: `LLMClient`、`LLMClientConfig`（来自 `./client.ts`）、`Message`（来自 `../core/types.ts`）
@@ -403,11 +403,11 @@ git commit -m "feat: add DeepSeek client (non-streaming)"
 ### Task 5: REPL 主循环与入口
 
 **Files:**
-- Create: `demos/ai-chat/src/cli/repl.ts`
-- Create: `demos/ai-chat/src/cli/config.ts`
-- Create: `demos/ai-chat/src/index.ts`
-- Test: `demos/ai-chat/test/repl.test.ts`
-- Test: `demos/ai-chat/test/config.test.ts`
+- Create: `demos/01-llm/src/cli/repl.ts`
+- Create: `demos/01-llm/src/cli/config.ts`
+- Create: `demos/01-llm/src/index.ts`
+- Test: `demos/01-llm/test/repl.test.ts`
+- Test: `demos/01-llm/test/config.test.ts`
 
 **Interfaces:**
 - Consumes: `LLMClient`（来自 `../llm/client.ts`）、`Session`（来自 `../core/session.ts`）、`createDeepSeekClient`（来自 `../llm/deepseek.ts`）
@@ -666,10 +666,10 @@ git commit -m "feat: add REPL loop, config resolution, and entrypoint"
 ### Task 6: 项目文档
 
 **Files:**
-- Create: `demos/ai-chat/README.md`
-- Create: `demos/ai-chat/ARCHITECTURE.md`
-- Create: `demos/ai-chat/HOW-IT-WORKS.md`
-- Create: `demos/ai-chat/DECISIONS.md`
+- Create: `demos/01-llm/README.md`
+- Create: `demos/01-llm/ARCHITECTURE.md`
+- Create: `demos/01-llm/HOW-IT-WORKS.md`
+- Create: `demos/01-llm/DECISIONS.md`
 
 **Interfaces:**
 - Consumes: 无（纯文档，引用已完成代码）

@@ -8,9 +8,9 @@
 
 **Tech Stack:** Node 22（原生 TS 类型擦除）、pnpm、TypeScript（`tsc --noEmit`）、`node --test`、`node:child_process`（集成测试）。
 
-**Spec:** `demos/ai-chat/docs/superpowers/specs/2026-09-23-ai-chat-design.md`（尤其 §8 错误处理、§13 验收）
+**Spec:** `demos/01-llm/docs/superpowers/specs/2026-09-23-ai-chat-design.md`（尤其 §8 错误处理、§13 验收）
 
-**上一份计划:** `demos/ai-chat/docs/superpowers/plans/2026-09-23-ai-chat-conversation.md`（Task 1–6 已执行完毕）
+**上一份计划:** `demos/01-llm/docs/superpowers/plans/2026-09-23-ai-chat-conversation.md`（Task 1–6 已执行完毕）
 
 ---
 
@@ -50,12 +50,12 @@ spec §8 写的是「打印错误到 **stderr**」。现有 `repl.ts` 只有一�
 - Node ≥ 22（依赖原生类型擦除直接运行 `.ts`；本项目在 v22.23.2 验证）
 - 零运行时依赖；devDependency 仅 `typescript`、`@types/node`
 - ESM：`package.json` `"type": "module"`
-- 目录：`demos/ai-chat/` 为项目根，代码在 `src/`，测试在 `test/`
+- 目录：`demos/01-llm/` 为项目根，代码在 `src/`，测试在 `test/`
 - 分层依赖单向：`cli → core → llm`；`llm`/`core` 不 import `node:readline`、不写 `process.stdout` / `process.stderr`。**本次把错误写入 `process.stderr`，写入方仍是 `cli/` 层，约束不变**
 - 源码统一用 `@/` 别名指向 `src/`；`start` / `test` 脚本必须带 `--import ./loader.mjs`（Node 原生类型擦除不读 tsconfig 的 `paths`）
 - 密钥只经环境变量注入：`.env` 只放占位符（入库），真实值放 `.env.local`（已在 `.gitignore`）
 - 测试不得依赖真实网络。唯一例外是 Task 5 的手动冒烟，它**不进入 `pnpm test`**
-- 所有验证命令在 `demos/ai-chat/` 目录下执行
+- 所有验证命令在 `demos/01-llm/` 目录下执行
 
 ## Review Focus
 
@@ -73,9 +73,9 @@ spec §8 写的是「打印错误到 **stderr**」。现有 `repl.ts` 只有一�
 ### Task 1: 错误输出分流到 stderr
 
 **Files:**
-- Modify: `demos/ai-chat/src/cli/repl.ts`（`ReplOptions` 增字段；新增 `writeError`；`catch` 分支改用它）
-- Modify: `demos/ai-chat/src/index.ts`（传入 `process.stderr`）
-- Test: `demos/ai-chat/test/repl.test.ts`（全量重写：3 个既有用例适配双通道 + 新增 1 个分流用例）
+- Modify: `demos/01-llm/src/cli/repl.ts`（`ReplOptions` 增字段；新增 `writeError`；`catch` 分支改用它）
+- Modify: `demos/01-llm/src/index.ts`（传入 `process.stderr`）
+- Test: `demos/01-llm/test/repl.test.ts`（全量重写：3 个既有用例适配双通道 + 新增 1 个分流用例）
 
 **Interfaces:**
 - Consumes: `LLMClient`（`@/llm/client.ts`）、`Session`（`@/core/session.ts`）
@@ -366,7 +366,7 @@ git commit -m "fix: route REPL error output to stderr"
 ### Task 2: 补 `deepseek.ts` 的两条异常路径测试
 
 **Files:**
-- Modify: `demos/ai-chat/test/deepseek.test.ts`（在文件末尾追加 2 个用例）
+- Modify: `demos/01-llm/test/deepseek.test.ts`（在文件末尾追加 2 个用例）
 - 不改动任何源码 —— 本任务只补测试。若某条断言失败，说明发现了真实缺陷，**停下来报告，不要为了让测试变绿而改测试**。
 
 **Interfaces:**
@@ -426,7 +426,7 @@ git commit -m "test: cover fetch rejection and non-JSON error body"
 ### Task 3: 集成测试 —— 缺 key 时的退出码与输出流
 
 **Files:**
-- Create: `demos/ai-chat/test/index.test.ts`
+- Create: `demos/01-llm/test/index.test.ts`
 
 **Interfaces:**
 - Consumes: `src/index.ts`（作为子进程运行，`cwd` 为项目根）
@@ -530,9 +530,9 @@ git commit -m "test: verify missing-key exit code via subprocess"
 ### Task 4: 文档同步
 
 **Files:**
-- Modify: `demos/ai-chat/HOW-IT-WORKS.md`
-- Modify: `demos/ai-chat/README.md`
-- Modify: `demos/ai-chat/DECISIONS.md`
+- Modify: `demos/01-llm/HOW-IT-WORKS.md`
+- Modify: `demos/01-llm/README.md`
+- Modify: `demos/01-llm/DECISIONS.md`
 
 **Interfaces:**
 - Consumes: 无（纯文档，引用已完成代码）
