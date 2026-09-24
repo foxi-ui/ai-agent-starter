@@ -3,7 +3,7 @@
 > 回答：遇到这个报错时怎么定位、怎么修、怎么避免再犯。
 > 只记**实际踩过或已确认会踩**的坑，每条都写明来源（实测 / 记录在案）。
 
-**T1–T5 是本项目自身的坑，T6–T7 是附带的（不是本项目的代码问题，但会在本项目的工作中遇到）。**
+**T1–T5 是本项目自身的坑，T6–T8 是附带的（不是本项目的代码问题，但会在本项目的工作中遇到）。**
 
 ---
 
@@ -309,3 +309,75 @@ node --experimental-strip-types src/index.ts
 `node -v` 应 ≥ 22；`node src/index.ts` 能直接跑起来。
 
 来源：`README.md` 已记录。
+
+---
+
+## T8（附）批量改文件时循环只跑了一次：zsh 不分割 `$VAR`
+
+> 与 `01-llm` 的代码无关，但做**跨文件批量替换**（改文档引用、改配置项）时会遇到。
+> 本仓库的 shell 是 **zsh**（macOS 默认），而网上绝大多数脚本是照 bash 写的。
+
+**症状**
+
+```console
+$ FILES="demos/01-llm/README.md demos/01-llm/DECISIONS.md"
+$ for f in $FILES; do sed -i '' 's|a|b|' "$f"; done
+sed: demos/01-llm/README.md demos/01-llm/DECISIONS.md: No such file or directory
+```
+
+**tells —— 报错里把整串文件名当一个路径**（中间的空格还在），而不是逐个报「找不到第一个文件」。
+
+**原因**
+
+zsh 默认**不对未加引号的变量展开做词分割**（与 bash 相反）。所以 `$FILES` 整体是一个词，循环只跑一次，`sed` 拿到的是一个含空格的超长文件名。
+
+实测三种写法的差异：
+
+```console
+$ zsh -c 'FILES="a.txt b.txt"; for f in $FILES;   do echo "[$f]"; done'
+[a.txt b.txt]            # ← 只跑一次
+
+$ bash -c 'FILES="a.txt b.txt"; for f in $FILES;  do echo "[$f]"; done'
+[a.txt]
+[b.txt]                  # ← bash 会分割
+
+$ zsh -c 'set -- a.txt b.txt; for f in "$@";      do echo "[$f]"; done'
+[a.txt]
+[b.txt]                  # ← 正确
+```
+
+**定位**
+
+在循环体里加一行 `echo "[$f]"` 数迭代次数。如果只跑了一次、且内容里带空格，就是这个坑。
+
+**解决**
+
+四选一（前两个推荐）：
+
+```bash
+# 1. set -- + "$@"（本次采用）
+set -- file1 file2 file3
+for f in "$@"; do sed -i '' 's|a|b|' "$f"; done
+
+# 2. zsh 数组
+files=(file1 file2 file3)
+for f in $files; do sed -i '' 's|a|b|' "$f"; done
+
+# 3. 显式开启分割
+for f in ${=FILES}; do ...; done
+
+# 4. 改用 bash 跑
+bash -c 'FILES="..."; for f in $FILES; do ...; done'
+```
+
+**验证**
+
+`echo "[$f]"` 的迭代次数应等于文件个数。改完再 `grep` 一遍旧值，残留应为 0。
+
+**避免**
+
+- **zsh 里不要用「空格分隔的字符串」当文件列表** —— 要么用数组，要么用 `"$@"`
+- 这个失败是**响亮且安全**的：命令直接报错退出，一个字节都没改。所以看到这个报错不用慌，修完重跑即可；真正危险的是它「静默地只改了一半」
+- 批量替换前先 `git status` 确认工作区干净，这样即使改错也能一眼看出
+
+来源：实测（2026-09-24 批量同步阶段目录引用时踩到）。
