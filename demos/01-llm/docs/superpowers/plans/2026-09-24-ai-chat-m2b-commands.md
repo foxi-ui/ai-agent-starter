@@ -885,8 +885,10 @@ git commit -m "feat: handle slash commands in the REPL"
 - Modify: `demos/01-llm/DECISIONS.md`
 - Modify: `demos/01-llm/README.md`
 - Modify: `demos/01-llm/docs/01-full-design.md`（Step 0 ① 一格表格）
-- Modify: `demos/01-llm/docs/superpowers/specs/2026-09-24-ai-chat-m2-design.md`（Step 0 ③ §9 加限定）
+- Modify: `demos/01-llm/docs/superpowers/specs/2026-09-24-ai-chat-m2-design.md`（Step 0 ③ 两处超时声明加限定）
 - Modify: `demos/01-llm/src/llm/deepseek.ts`（**Step 0 ③ 只改顶部一句注释，逻辑零改动**）
+- Modify: `demos/01-llm/docs/troubleshooting.md`（Step 0 ④ T10 补第三种报错形状）
+- Modify: `demos/01-llm/ARCHITECTURE.md`（Step 3 模块表补 `core/commands.ts` + 总览加一句 M2b 对照）
 - Modify: `README.md`（仓库根，阶段目录表的状态列）
 
 **Interfaces:**
@@ -935,6 +937,8 @@ stdout 已经写出了 `AI: ` 与半截正文 —— 同文件另一处（「边
 - `docs/superpowers/specs/2026-09-24-ai-chat-m2-design.md` 的 §9 写「超时动作：内部 `AbortController.abort()`
   断开连接」——**与实现不符**：`src/` 全仓无 `AbortController`（唯一的 `aborted` 是 `core/types.ts` 里的一个
   `FinishReason` 字符串），`readWithIdleTimeout` 只是 reject，连接由 `reader.cancel()` 收掉。
+  **同一个过度声明在 spec 里有两处**（`:115`「超时用内部 `AbortController` 断开连接并抛普通 `Error`」
+  与 `:460` 的「超时动作」条）—— 只改点名的 §9 会留下一处同样的错话，两处一起改。
 
 **④ 给 `docs/troubleshooting.md` 的 T10 补第三种报错形状**
 
@@ -976,12 +980,17 @@ Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.t
 `/clear` 清的是**对话内容**，不影响当前模型 —— 会话配置与对话历史是两回事。
 ```
 
-- [ ] **Step 2: 在 `DECISIONS.md` 末尾追加 D23–D25**
+- [ ] **Step 2: 在 `DECISIONS.md` 末尾追加 D24–D26**
+
+> ⚠️ 编号是 **D24–D26，不是 D23–D25**。本计划写于 M2a 落地之前，而 M2a 在实施中往 `DECISIONS.md`
+> 追加了自己的 **D23**（「spec §11 坏 JSON 计数在 M2a 未落地」，`:395`）。现状是 D1–D23 共 23 条
+> （`grep -c '^## D' DECISIONS.md` → 23）；照原样追加会产生**两个 D23**。
+> 下面三个标题里的编号已改，正文照抄。
 
 ```markdown
 ---
 
-## D23. 命令逻辑在 `core/`，打印在 `cli/`
+## D24. 命令逻辑在 `core/`，打印在 `cli/`
 
 **决策**：`core/commands.ts` 只做「解析 + 改 Session + 返回结构化结果」，
 `cli/render.ts` 负责把结果变成文字。
@@ -994,7 +1003,7 @@ Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.t
 
 ---
 
-## D24. 命令永不进入对话上下文
+## D25. 命令永不进入对话上下文
 
 **决策**：命令在 `session.append('user', …)` **之前**处理。
 
@@ -1008,7 +1017,7 @@ Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.t
 
 ---
 
-## D25. 命令结果走 stdout，未知命令走 stderr
+## D26. 命令结果走 stdout，未知命令走 stderr
 
 **决策**：把 D13 的规则细化为两条线 ——
 
@@ -1025,7 +1034,7 @@ Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.t
 但未知命令这类错误仍走 stderr，边界是清楚的。
 ```
 
-- [ ] **Step 3: 改 `demos/01-llm/README.md`**
+- [ ] **Step 3: 改 `demos/01-llm/README.md` 与 `ARCHITECTURE.md`**
 
 在「常用命令」表之后插入一节：
 
@@ -1055,7 +1064,28 @@ Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.t
 - 命令：`/usage`（Token 统计尚未实现，属 M4）
 ```
 
-把测试数量更新为实际值（Task 4 结束时是 **78**）。
+把「常用命令」表里 `pnpm test` 一行的用例数更新为实际值。**现在写的是「当前 61 个用例」**，
+控制方在派发前实测：Task 4 结束时是 **88**（`pnpm test` → `# tests 88 / pass 88 / fail 0`）。
+以你执行时的实际输出为准；若与 88 不符，以实测为准并在报告里注明。
+
+再补两处**目录结构**（AGENTS.md 的规定：`目录结构` 变了就要同步 README / ARCHITECTURE；M2b 新增了两个文件）：
+
+1. 「项目结构」代码块里 `src/core/` 一行下面补 `core/commands.ts`，`test/` 列表里补 `commands.test.ts` ——
+   两个文件都已入库但该块里没有，块首的注释还自称是目录名映射。
+2. `ARCHITECTURE.md` 的「模块职责」表补一行（该表上方写着「事实来源：`src/` 实际源码目录」，缺行即失真）：
+
+```markdown
+| `src/core/commands.ts` | core | 命令解析（`parseCommand`）与执行（`executeCommand` → `CommandResult`）；只改 `Session`、不打印 | 打印、网络 |
+```
+
+3. `ARCHITECTURE.md`「总览」里 M2a 那句（「streaming（M2a）已经按这个方式落过一遍 ……」）之后补一句对照 ——
+   该段说「新增能力主要落在 `llm/` 与 `cli/`，`core/` 保持稳定」，而 M2b 在 `core/` 里**新增了文件**，
+   读者需要知道这条经验法则的例外在哪：
+
+```markdown
+**commands（M2b）** 是这条法则的一个例外：命令逻辑落在**新增的 `core/commands.ts`** 里，
+因为 `core` 不许写 stdout，所以「改 Session」留在 core、「打印」放进 `cli/render.ts` —— 分层反而更严了。
+```
 
 - [ ] **Step 4: 改仓库根 `README.md` 的阶段目录表**
 
@@ -1070,17 +1100,27 @@ Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.t
 Run: `pnpm run typecheck && pnpm test`
 Expected: typecheck 退出码 0；测试全绿
 
-Run: `grep -c '^```' HOW-IT-WORKS.md DECISIONS.md README.md ../../README.md`
+Run: `grep -c '^```' HOW-IT-WORKS.md DECISIONS.md README.md ARCHITECTURE.md docs/troubleshooting.md ../../README.md`
 Expected: 每个文件的 ``` 数量都是偶数
 
 - [ ] **Step 6: Commit**
 
+**本步的 `git add` 必须覆盖本任务改过的每一个文件。** Step 0 改的 4 个文件（`docs/01-full-design.md`、
+spec、`src/llm/deepseek.ts`、`docs/troubleshooting.md`）此前不在下面任何一条 `git add` 里 ——
+按原样执行会把它们留在工作区未提交。（本增量里这是**第三处**同类缺陷：Task 4 的 Files 块、Task 4 的
+`git add`、以及此处，都源于「改动清单与 `git add` 分开写、改一处忘另一处」。）
+
 ```bash
-git add HOW-IT-WORKS.md DECISIONS.md README.md
+git add HOW-IT-WORKS.md DECISIONS.md README.md ARCHITECTURE.md
+git add docs/01-full-design.md docs/troubleshooting.md
+git add docs/superpowers/specs/2026-09-24-ai-chat-m2-design.md src/llm/deepseek.ts
 git commit -m "docs: record slash command design and boundaries"
 git add ../../README.md
 git commit -m "docs: update stage status for M2"
 ```
+
+提交后自检：`git status --short` 必须为空。若非空，说明有改动没被 `git add` 覆盖 —— 补上再提交，
+并在报告里如实写明补了哪个文件。
 
 ---
 
