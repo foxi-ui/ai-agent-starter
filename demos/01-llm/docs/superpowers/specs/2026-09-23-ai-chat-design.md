@@ -92,7 +92,6 @@ demos/01-llm/
     deepseek.test.ts
   README.md
   ARCHITECTURE.md
-  HOW-IT-WORKS.md
   DECISIONS.md
 ```
 

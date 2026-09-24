@@ -31,8 +31,7 @@
 
 ```text
 README.md        项目是什么、怎么跑
-ARCHITECTURE.md  由什么组成、模块怎么依赖
-HOW-IT-WORKS.md  一轮请求实际发生了什么
+ARCHITECTURE.md  由什么组成、模块怎么依赖、一轮请求实际发生了什么
 DECISIONS.md     为什么这样设计、放弃了什么
 EVALUATION.md    路线图的验收项达没达标、证据是什么
 ```

@@ -125,3 +125,140 @@ loader-hooks.mjs   在钩子线程中把 @/x 解析为 src/x 的文件 URL
 - **零运行时依赖**：`dependencies` 为空。`loader-hooks.mjs` 只用 `node:` 内置模块。
 - **密钥不落代码**：`apiKey` 只从环境变量读入，经 `Config` 传给 adapter。
 - **上下文只在内存**：进程退出即清空。持久化属于后续增量。
+
+## 运行时数据流
+
+> 一轮请求实际发生了什么。静态结构见上文「模块职责」，决策理由见 `DECISIONS.md`。
+> 事实来源：`src/cli/repl.ts`、`src/cli/render.ts`、`src/core/session.ts`、`src/llm/deepseek.ts`、`src/llm/sse.ts`。
+
+### 数据流全貌
+
+```text
+readline 读到一行
+  │
+  ├─ line.trim() === '' ? 跳过（空行不进入上下文）
+  │
+  ├─ session.append('user', question)
+  │
+  ├─ messages = session.toMessages(SYSTEM_PROMPT)
+  │
+  ├─ client.chatStream(messages, { model: session.model })
+  │       → POST {baseUrl}/chat/completions
+  │         body: { model, messages, stream: true }
+  │       → 逐块 read → TextDecoder(stream) → parseSse 分帧 → 归一化成 StreamEvent
+  │
+  ├─ 成功：text 累积 → session.append('assistant', text)
+  └─ 失败：打印 [error] ... 到 stderr → 不 append（上下文保持干净）
+  │
+  └─ renderer.finish() 保证收尾换行（正常与异常都调用）
+```
+
+### 步骤 1：读取一行
+
+`src/cli/repl.ts` 用 `readline` 的**异步迭代器**逐行消费输入，但**手写迭代**而不是
+`for await`：
+
+```ts
+const lines = rl[Symbol.asyncIterator]();
+// ...
+writePrompt();                      // 提示符必须写在「读取」之前
+const { value: line, done } = await lines.next();
+```
+
+不用 `rl.on('line', ...)` 的原因：每行的处理包含 `await`（消费
+`client.chatStream(...)` 返回的整个事件流）。事件回调无法自然地串行化异步工作，
+快速连续输入时会并发发起请求，导致上下文顺序错乱。异步迭代器保证
+**上一轮完全结束（流读到底）后**才处理下一行。
+
+之所以不写成 `for await (const line of rl)`：提示符必须在**读取下一行之前**写出，
+而 `for await` 把「读取」藏在语法里，拿不到这个时机（见 D15）。串行语义不变。
+
+循环在输入流关闭（EOF / Ctrl-D）时自然退出。
+
+空行被 `continue` 跳过，因此不会污染上下文。
+
+### 步骤 2：累积用户消息
+
+```ts
+session.append('user', question);
+```
+
+`Session`（`src/core/session.ts`）内部只是一个 `Message[]`。它不关心网络，
+只负责按顺序保存。
+
+### 步骤 3：组装请求消息
+
+```ts
+session.toMessages(SYSTEM_PROMPT)
+```
+
+返回 `[{ role: 'system', content: SYSTEM_PROMPT }, ...历史]`。
+`system` 永远在最前，作为稳定前缀；其后是历次 `user` / `assistant` 交替。
+
+`systemPrompt` 为空串时不插入 `system` 消息（便于测试与后续自定义）。
+
+### 步骤 4：发起请求
+
+`createDeepSeekClient`（`src/llm/deepseek.ts`）用原生 `fetch` 发一次 POST：
+
+```ts
+POST {baseUrl}/chat/completions
+headers: { 'content-type': 'application/json',
+           authorization: `Bearer ${apiKey}` }
+body:    { model, messages, stream: true }
+```
+
+**流式**：body 只发这三个字段，**不发 `stream_options`** —— 官方文档没有要求流式
+必须带它（依赖方向是反的：单独传 `stream_options` 才返回 400），而 M2 也不消费
+`usage`，发了没有收益（见 `docs/deepseek-api-facts.md` 的「接口」）。
+
+响应是一个 SSE **字节流**，要经过三步才变成 `StreamEvent`：
+
+```text
+response.body.getReader()  逐块 read 出 Uint8Array
+      ↓  TextDecoder({ stream: true }).decode(chunk)   跨块的多字节字符在这里补齐
+      ↓  parseSse(chunk, buffer) → { events, rest }    纯函数分帧，残缺的尾巴进 rest
+      ↓  归一化                                          data 里的 JSON → StreamEvent
+```
+
+### 步骤 5：解析响应（`chat()` 的非流式路径）
+
+流式路径的正文来自下面步骤 6 的 `text-delta` 累积。而 `chat()` 这条**非流式**路径
+仍然保留着（见 D16），它一次拿到完整 JSON，解析方式没变：
+
+```ts
+const content = data.choices[0]?.message?.content ?? '';
+```
+
+逐层可选链，缺字段时回落为空串——**任何一层缺失都不会抛错**。
+
+### 步骤 6：渲染事件并追加 assistant
+
+正文由**渲染器**（`src/cli/render.ts`）逐块写到 stdout：第一个 `text-delta` 到达时
+先写 `AI: ` 前缀，之后每来一块正文就接着写，**不补换行**（换行统一由收尾负责）。
+另外 `done` 分支有个**兜底**：整轮一个字都没产出（比如空回答）时也补上前缀 ——
+空回答在流式与非流式两条路径下的形状必须一致（见 `test/render.test.ts`）。
+
+```ts
+for await (const event of stream) {
+  renderer.onEvent(event);                                // 呈现：stdout 出正文、stderr 出指示
+  if (event.type === 'text-delta') text += event.text;    // 累积：由 repl 自己攒
+}
+session.append('assistant', text);
+```
+
+累积**不在渲染器里做**：只有攒出完整正文才能写进 `Session` 当上下文，那是 repl 的
+职责；渲染器只管「这一轮在终端上长什么样」。
+
+`renderer.finish()` 在 `finally` 里调用，保证正文后有**且只有一个**换行 —— 否则下一次
+`You: ` 提示符会接在半句话后面。正常与异常路径都走它。
+
+这一步让下一轮能「记得」刚才的回答，从而支持「总结刚才内容」。
+
+### 流式：屏幕上看到的 ≠ 模型记得的
+
+流式输出会**边收边打印**，所以中途失败时屏幕上会留下半截回答。但那半截
+**不会**进入 `Session` —— `session.append('assistant', …)` 只在流正常结束后执行。
+
+后果：下一轮模型看不到那半截内容。你看到的和它记得的是两回事，
+这不是 bug，是「失败轮次不写上下文」这条规则的必然结果（见 D7）。

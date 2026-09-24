@@ -37,6 +37,27 @@ M1 自身的交付目标 —— **非流式多轮对话 + 最小错误处理** �
 
 ---
 
+## 测试 ↔ 行为映射
+
+上表每一行都有对应测试，且全部不需要网络：
+
+| 行为 | 测试 |
+| --- | --- |
+| 消息按序累积、`system` 在最前 | `test/session.test.ts` |
+| SSE 分帧：一次多事件、事件跨两次 read、注释行、多行 data、`\r\n` 跨块、半条事件残留 | `test/sse.test.ts`（纯函数，喂字符串） |
+| 请求体 / 响应解析 / 401 抛错 / 空 content / fetch 抛错 / 非 JSON 错误体 / 流式事件序列、末 chunk 的 `finish_reason`、空闲超时、多字节切分 | `test/deepseek.test.ts`（mock `globalThis.fetch`） |
+| 正文走 stdout、思考指示与截断警告走 stderr、`finish` 只补一个换行 | `test/render.test.ts`（注入两条流） |
+| 一问一答、错误写 stderr 不污染 stdout、报错后继续、多轮上下文形状 | `test/repl.test.ts`（fake `LLMClient`） |
+| 命令解析三态（none / known / unknown）、`/clear` `/history` `/model` 的执行结果、`/model` 查询分支不写 `session.model` | `test/commands.test.ts`（纯函数，直接调 `parseCommand` / `executeCommand`） |
+| 缺 key 抛错、默认值、环境变量覆盖 | `test/config.test.ts` |
+| 缺 key 时 stderr 提示 + 退出码 1 | `test/index.test.ts`（子进程集成测试） |
+
+```bash
+pnpm test
+```
+
+---
+
 ## 1. 独立调用 LLM API — ✅ 达标
 
 **证据**

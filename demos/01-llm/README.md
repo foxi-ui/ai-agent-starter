@@ -173,7 +173,6 @@ AI: ...
 | 文档 | 回答什么问题 |
 | --- | --- |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 项目由什么组成？模块如何依赖？ |
-| [`HOW-IT-WORKS.md`](HOW-IT-WORKS.md) | 一轮对话实际发生了什么？ |
 | [`DECISIONS.md`](DECISIONS.md) | 为什么这样设计？ |
 | [`EVALUATION.md`](EVALUATION.md) | 路线图的验收项达没达标？证据是什么？ |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | 报这个错怎么办？怎么避免再犯？ |
