@@ -352,7 +352,7 @@ git commit -m "feat: add SSE frame parser"
 - Modify: `demos/01-llm/src/core/session.ts`
 - Modify: `demos/01-llm/src/cli/repl.ts`（`ReplOptions` 加 `model`、`new Session(options.model)`、`chat()` 调用处传 `options`）
 - Modify: `demos/01-llm/src/index.ts:24-30`
-- Test: `demos/01-llm/test/deepseek.test.ts`（追加 1 例）
+- Test: `demos/01-llm/test/deepseek.test.ts`（追加 **2** 例 —— 以 Step 1 的正文为准）
 - Test: `demos/01-llm/test/session.test.ts`（改 + 追加）
 - Test: `demos/01-llm/test/repl.test.ts`（4 处 options 补 `model`）
 
@@ -614,7 +614,7 @@ git commit -m "feat: pass model per request and track it in Session"
 **Files:**
 - Modify: `demos/01-llm/src/llm/client.ts`
 - Modify: `demos/01-llm/src/llm/deepseek.ts`
-- Test: `demos/01-llm/test/deepseek.test.ts`（追加 9 例）
+- Test: `demos/01-llm/test/deepseek.test.ts`（追加 **11** 例 —— 以 Step 1 的正文为准）
 - Test: `demos/01-llm/test/repl.test.ts`（fake client 补 `chatStream` 桩，仅为了让类型过关）
 
 **Interfaces:**
@@ -849,7 +849,14 @@ import { createDeepSeekClient } from '@/llm/deepseek.ts';
 import type { StreamEvent } from '@/core/types.ts';
 ```
 
-在 `test/repl.test.ts` 的 `fakeClient` 里补一个桩方法（**仅为了让类型过关**，Task 6 才让它真正工作）：
+在 `test/repl.test.ts` 里补 `chatStream` 桩方法（**仅为了让类型过关**，Task 6 才让它真正工作）。
+
+> **注意有两处，不止一处** —— 实测确认：`fakeClient` 工厂里一处，另有一个**内联的 fake client**
+> （在「多轮对话上下文按序累积」那个用例里手写的对象）。只补工厂会让内联那处报 `TS2741`
+> （property 'chatStream' is missing），与 Step 5「typecheck 退出码 0」矛盾。**两处都要补，
+> 且都不要动它们的断言逻辑。**
+
+工厂那处：
 
 ```ts
   return {
