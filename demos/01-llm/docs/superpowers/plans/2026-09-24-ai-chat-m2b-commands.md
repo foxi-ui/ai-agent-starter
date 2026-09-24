@@ -996,7 +996,7 @@ Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.t
 `cli/render.ts` 负责把结果变成文字。
 
 **理由**：`core` 不许写 stdout（分层单向 `cli → core → llm`）。
-拆开后命令的全部行为都能在无 IO 的情况下断言 —— 12 个 `commands.test.ts`
+拆开后命令的全部行为都能在无 IO 的情况下断言 —— 14 个 `commands.test.ts`
 用例没有一个需要捕获输出。
 
 **代价**：多一层 `CommandResult` 联合类型与一个渲染分支。换来的是命令逻辑完全可测。
