@@ -8,9 +8,9 @@
 三层内核，依赖方向**严格单向**：
 
 ```text
-cli/      readline 主循环、打印、配置解析
+cli/      readline 主循环、打印、配置解析、参数解析、会话文件的读写
   ↓  只依赖 core 与 llm 的公开接口
-core/     会话状态、消息组装
+core/     会话状态、消息组装、会话日志的纯逻辑（格式 / 解析 / 回放）
   ↓  只依赖 core 自身类型
 llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件归一化
 ```
@@ -19,7 +19,10 @@ llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件�
 
 - `llm/` 与 `core/` **不 import `node:readline`**，**不写 `process.stdout` / `process.stderr`**。
   副作用只允许出现在 `cli/` 与 `src/index.ts`。
-- 边界接口是 `LLMClient`。测试用替身替换它，使 CLI 行为能在**无网络**下断言。
+- `core/` **不 import `node:fs`**（M3 起延伸出的同一条规则）：会话日志的格式与回放
+  在 `core/journal.ts` 里是纯逻辑，真正读写文件的 `cli/store.ts` 是它唯一的实现。
+- 边界接口是 `LLMClient`（网络）与 `SessionStore`（磁盘）。测试用替身替换它们，
+  使 CLI 行为能在**无网络、无文件系统**下断言。
 
 这套骨架为后续增量（命令 / 落盘 / token 统计）预留了挂载点：新增能力主要落在
 `llm/`（如何调用）与 `cli/`（如何交互），`core/` 保持稳定。
@@ -27,17 +30,22 @@ llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件�
 两个文件，`core/types.ts` 只多了几个类型，`core/session.ts` 只多了一个 `model` 存取器。
 **commands（M2b）** 是这条法则的一个例外：命令逻辑落在**新增的 `core/commands.ts`** 里，
 因为 `core` 不许写 stdout，所以「改 Session」留在 core、「打印」放进 `cli/render.ts` —— 分层反而更严了。
+**persistence（M3）** 沿用同一条思路再切一刀：会话日志的**格式与回放**（`core/journal.ts`）
+是纯逻辑，**文件读写**（`cli/store.ts`）留在 cli，于是 core 至今不 import `node:fs`。
 
 ## 模块职责
 
 | 文件 | 层 | 职责 | 不负责 |
 | --- | --- | --- | --- |
-| `src/index.ts` | 入口 | 解析配置、组装依赖、启动 REPL；配置缺失时退出码 1 | 任何对话逻辑 |
+| `src/index.ts` | 入口 | 解析配置与命令行参数、新建或恢复会话、组装依赖、启动 REPL；任一前置步骤失败退出码 1 | 任何对话逻辑 |
 | `src/cli/config.ts` | cli | 环境变量 → `Config`，集中默认值 | 读取 `process.env` 之外的事 |
-| `src/cli/repl.ts` | cli | readline 主循环、解析并执行斜杠命令（经 `core/commands.ts`）、调用 `LLMClient`、经渲染器呈现流式结果（错误直写 stderr） | HTTP、消息组装细节 |
+| `src/cli/args.ts` | cli | 命令行参数 → `Args`（`fresh` / `resume`）；纯函数，非法输入抛错（消息带用法） | 打印、退出码、文件系统 |
+| `src/cli/store.ts` | cli | `SessionStore` 的文件实现：建文件（独占创建）、追加、读取、列出；两道路径校验 | 记录格式与回放语义 |
+| `src/cli/repl.ts` | cli | readline 主循环、解析并执行斜杠命令（经 `core/commands.ts`）、调用 `LLMClient`、经渲染器呈现流式结果（错误直写 stderr）、把会话变更落盘（`onChange`） | HTTP、消息组装细节、记录格式 |
 | `src/core/types.ts` | core | `Role` / `Message` / `ChatResult` / `StreamEvent` / `FinishReason` / `ChatOptions` 类型定义 | 行为 |
-| `src/core/session.ts` | core | 消息数组累积；`toMessages(systemPrompt)` 组装请求消息 | 网络、打印 |
-| `src/core/commands.ts` | core | 命令解析（`parseCommand`）与执行（`executeCommand` → `CommandResult`）；只改 `Session`、不打印 | 打印、网络 |
+| `src/core/journal.ts` | core | 会话日志的**纯逻辑**：记录类型、序列化/解析、`replay` 回放、会话 id 生成与校验、`SessionStore` 接口 | 文件 IO、打印 |
+| `src/core/session.ts` | core | 消息数组累积；`toMessages(systemPrompt)` 组装请求消息；变更广播（`onChange`） | 网络、打印、落盘 |
+| `src/core/commands.ts` | core | 命令解析（`parseCommand`）与执行（`executeCommand` → `CommandResult`）；只改 `Session`、不打印；外部数据经 `CommandDeps` 注入 | 打印、网络、文件系统 |
 | `src/llm/client.ts` | llm | `LLMClient` 接口 + `LLMClientConfig`（测试接缝） | 具体实现 |
 | `src/llm/deepseek.ts` | llm | `fetch` 调用 `/chat/completions`（非流式 + 流式）、解析 `content`、把 SSE chunk 归一化成 `StreamEvent`、非 2xx 抛错 | 打印、重试 |
 | `src/llm/sse.ts` | llm | SSE 分帧（纯函数，只懂协议不懂 DeepSeek） | 网络、解码、事件语义 |
@@ -82,6 +90,7 @@ export type LLMClientFactory = (config: LLMClientConfig) => LLMClient;
 | `cli → core`、`cli → llm` | `core → cli`、`llm → cli` |
 | `llm → core`（只取类型）；`llm/sse.ts` 是纯函数，不碰 IO | `core → llm` |
 | 任意层 → `node:` 内置模块 | `llm` / `core` → `node:readline` |
+| `cli` → `node:fs`（只有 `cli/store.ts` 一处） | `core` → `node:fs` |
 | `core` / `llm` 导出纯函数与类型 | `core` / `llm` 写 `process.stdout` |
 
 `core` 与 `llm` 之间只有类型依赖（`import type`），运行时不存在 `core → llm` 的边。
@@ -124,12 +133,46 @@ loader-hooks.mjs   在钩子线程中把 @/x 解析为 src/x 的文件 URL
 
 - **零运行时依赖**：`dependencies` 为空。`loader-hooks.mjs` 只用 `node:` 内置模块。
 - **密钥不落代码**：`apiKey` 只从环境变量读入，经 `Config` 传给 adapter。
-- **上下文只在内存**：进程退出即清空。持久化属于后续增量。
+- **会话落盘是事件流**：`.sessions/<id>.jsonl` 一行一条记录，回放即重建
+  （见 `runtime` 一节与 D28）。它**不是**「一份消息快照」，`/clear` 与 `/model`
+  这类没有对应消息的状态变更同样会被记下来。
+- **磁盘只落后、不阻断**：写盘失败不打断对话，只是磁盘落后于内存并给一行警告（D34）。
+- **会话 id 是路径的一部分**，因此受白名单校验 + 路径包含检查两道路径防线约束（D32）。
 
 ## 运行时数据流
 
 > 一轮请求实际发生了什么。静态结构见上文「模块职责」，决策理由见 `DECISIONS.md`。
-> 事实来源：`src/cli/repl.ts`、`src/cli/render.ts`、`src/core/session.ts`、`src/llm/deepseek.ts`、`src/llm/sse.ts`。
+> 事实来源：`src/index.ts`、`src/cli/repl.ts`、`src/cli/render.ts`、`src/core/session.ts`、`src/core/journal.ts`、`src/llm/deepseek.ts`、`src/llm/sse.ts`。
+
+### 启动：从进程启动到 REPL 就绪
+
+```text
+resolveConfig(process.env)          # 缺 DEEPSEEK_API_KEY → stderr + 退出码 1
+      ↓                             #   （排在参数解析之前，保持 M1 的既有行为）
+parseArgs(process.argv.slice(2))    # 非法参数 → stderr + 退出码 1
+      ↓                             #   以上两步都在创建任何文件之前
+createFileStore(AI_CHAT_HOME ?? '.sessions')
+      ↓
+  ┌─ fresh ──────────────────────────────────────────────┐
+  │ makeSessionId(now, randomBytes(2))   # 本地时间 + 随机后缀 │
+  │ store.create(id, model)              # 独占创建 + 写 meta 行 │
+  │ stderr: [session] <id>               │
+  └──────────────────────────────────────────────────────┘
+  ┌─ resume <id> ────────────────────────────────────────┐
+  │ store.load(id)  → null ? stderr「会话不存在」+ 退出码 1   │
+  │ replay(records) → { messages, model }                │
+  │ model 缺失时回落到 config.model                        │
+  │ stderr: [resumed] <id>（N 条消息）                     │
+  └──────────────────────────────────────────────────────┘
+      ↓
+runRepl(client, { sessionId, history, store, … })
+```
+
+三条诊断信息（`[session]` / `[resumed]` / `[警告]`）都走 **stderr**：它们是诊断，
+不是用户要的输出，stdout 仍然只承载模型回答与命令结果。
+
+**恢复出来的历史只在构造时铺进 `Session`，不走 `append`** —— 否则每恢复一条历史
+就会多写一行日志，打开一次会话文件就翻一倍（见 D29）。
 
 ### 数据流全貌
 
@@ -139,6 +182,7 @@ readline 读到一行
   ├─ line.trim() === '' ? 跳过（空行不进入上下文）
   │
   ├─ session.append('user', question)
+  │       └─ onChange 广播 → store.append(id, change) → 追加一行 JSON
   │
   ├─ messages = session.toMessages(SYSTEM_PROMPT)
   │
@@ -254,6 +298,31 @@ session.append('assistant', text);
 `You: ` 提示符会接在半句话后面。正常与异常路径都走它。
 
 这一步让下一轮能「记得」刚才的回答，从而支持「总结刚才内容」。
+
+### 落盘路径：一次变更怎么变成一行日志
+
+```text
+session.append(role, content) / session.clear() / session.model = name
+      ↓  先改内存状态
+      ↓  再广播：this.onChange?.({ type: 'message' | 'clear' | 'model', … })
+cli/repl.ts 的 onChange 实现：store.append(options.sessionId, change)
+      ↓
+cli/store.ts：serializeRecord(change) + '\n' → appendFileSync(<id>.jsonl)
+```
+
+三个设计点：
+
+1. **广播，而不是让 repl 在每个变更点手动写。** `/clear` 与 `/model <name>` 是
+   `executeCommand` **内部**改的状态，repl 的循环里看不见它们 —— 「记得每处补写」
+   的写法迟早会漏（见 D29）。
+2. **先改内存、再广播。** 写盘抛错时内存状态已经改好，不会留下「推了一半」的中间态；
+   降级方向是「磁盘落后于内存 + 一行警告」，而不是丢弃这次对话（见 D34，实现在
+   `cli/repl.ts` 的 `reportWriteFailure`，**只警告一次**）。
+3. **只读操作永不广播。** `toMessages()` / `history()` / `get model`（即 `/model`
+   无参数的查询分支）都不写状态，也就不写日志。
+
+> 回放的 `clear` **只清消息、不清模型**，与 `Session.clear()` 的语义严格对齐 ——
+> 否则 resume 出来的模型会和清空前不一致（见 `core/journal.ts` 的 `replay`）。
 
 ### 流式：屏幕上看到的 ≠ 模型记得的
 

@@ -10,7 +10,8 @@ CLI 模式下的 AI 对话工具，**不使用 LangChain，直接调用 DeepSeek
 LLM API → 消息结构 → 上下文管理 → Streaming → 错误处理 → Token 统计
 ```
 
-> **当前范围：仅「对话部分」**——多轮对话（非流式 + **流式 SSE**）+ 最小错误处理。
+> **当前范围：仅「对话部分」**——多轮对话（非流式 + **流式 SSE**）+ 最小错误处理
+> + **会话持久化**（JSONL 落盘、`--resume`、`/sessions`）。
 > 蓝图中尚未落地的项（token 统计、structured output、上下文裁剪等）见 [`EVALUATION.md`](EVALUATION.md)。
 
 ## 环境要求
@@ -40,6 +41,7 @@ pnpm install
 | `DEEPSEEK_API_KEY` | ✅ | — | DeepSeek API 密钥。缺失时启动即提示并退出（退出码 1） |
 | `DEEPSEEK_BASE_URL` | ❌ | `https://api.deepseek.com` | API 基地址 |
 | `AI_CHAT_MODEL` | ❌ | `deepseek-flash` | 模型名 |
+| `AI_CHAT_HOME` | ❌ | `.sessions`（相对 cwd） | 会话日志目录。设成绝对路径可把会话集中到一处 |
 
 密钥只经环境变量注入，**不写入代码**（见 `src/cli/config.ts`）。
 
@@ -98,11 +100,42 @@ AI: ...
 
 | 命令 | 作用 |
 | --- | --- |
-| `pnpm start` | 启动 REPL |
+| `pnpm start` | 启动 REPL（新会话） |
+| `pnpm start --resume <id>` | 恢复指定会话，接着上次聊 |
 | `pnpm test` | 运行全部测试（`node --test`，当前 91 个用例） |
 | `pnpm run typecheck` | 类型检查（`tsc --noEmit`） |
 
 命令的事实来源是 `package.json` 的 `scripts` 字段。
+
+### 会话：id、`--resume` 与会话目录
+
+每次启动都会把这场对话记到 `.sessions/<id>.jsonl`（一行一条 JSON），启动时在
+**stderr** 打印会话 id：
+
+```text
+[session] 20260924-224330-a3f1        # 新会话
+[resumed] 20260924-224330-a3f1（2 条消息）  # 恢复已有会话
+```
+
+拿这个 id 就能续聊：
+
+```bash
+pnpm start --resume 20260924-224330-a3f1
+```
+
+> **⚠️ 不要写成 `pnpm start -- --resume <id>`。** 这里与 npm 的惯例相反：
+> 实测 pnpm 10.34.5 会把 `--` 原样转发给脚本、成为第一个参数，程序报
+> `未知参数：--` 并以退出码 1 退出。也用不着 `--` 来防 pnpm 吃掉参数
+> （`--resume` 不会被它吃掉）。详见 `docs/troubleshooting.md` T13。
+
+行为约定：
+
+- **会话不存在**、**id 格式不合法**（例如 `--resume ../../etc/passwd`）、
+  **多给了参数**，都在 stderr 报错并以退出码 1 退出 —— 绝不静默开一个新会话，
+  那会把用户以为还留着的上下文悄悄丢掉。
+- 会话文件里**坏掉的行会被跳过**并在 stderr 提示跳过了几行，其余内容照常恢复。
+- 写盘失败（只读目录、磁盘满）不会中断对话：内存照常走，stderr 给**一行**警告。
+- 会话目录默认是**当前工作目录**下的 `.sessions/`，可用 `AI_CHAT_HOME` 覆盖。
 
 ## REPL 命令
 
@@ -112,6 +145,7 @@ AI: ...
 | `/history` | 列出当前会话的消息，每条截断到 200 字符 |
 | `/model` | 显示当前模型 |
 | `/model <name>` | 切换模型，立即对后续请求生效 |
+| `/sessions` | 列出历史会话，当前会话带 `*` 标记 |
 
 命令**不进入对话上下文**，也不会被发给模型。`/model` 不校验模型名 ——
 写错的名字会在下一次请求时由 API 报错（走 stderr）。
@@ -129,13 +163,17 @@ AI: ...
   .env.local            # 本地真实值（被 .gitignore 忽略，不入库）
   loader.mjs            # 注册 @/ 别名钩子（Node 运行时用）
   loader-hooks.mjs      # @/ → src/ 的 resolve 实现
+  .sessions/            # 会话日志（运行时产物，被 .gitignore 忽略）
   src/
-    index.ts            # 入口：解析配置 → 启动 REPL
+    index.ts            # 入口：解析配置与参数 → 新建/恢复会话 → 启动 REPL
     cli/config.ts       # 环境变量 → Config
-    cli/repl.ts         # readline 主循环 + 打印
-    cli/render.ts       # StreamEvent → stdout/stderr
+    cli/args.ts         # 命令行参数解析（--resume），纯函数、非法即抛错
+    cli/store.ts        # SessionStore 的文件实现 —— 唯一读写会话日志、唯一碰 node:fs 的地方
+    cli/repl.ts         # readline 主循环 + 打印 + 变更落盘（onChange）
+    cli/render.ts       # StreamEvent / CommandResult → stdout/stderr
     core/types.ts       # Message / Role / ChatResult / StreamEvent / ChatOptions 类型
-    core/session.ts     # 会话：消息数组、append、toMessages
+    core/journal.ts     # 会话日志：记录类型、序列化/解析、回放、id 生成与校验（纯逻辑，不碰 fs）
+    core/session.ts     # 会话：消息数组、append、toMessages、变更广播（onChange）
     core/commands.ts    # 命令解析（parseCommand）与执行（executeCommand → CommandResult）
     llm/client.ts       # LLMClient 接口（测试替身的接缝）
     llm/deepseek.ts     # DeepSeek adapter：非流式 + 流式调用、响应解析
@@ -156,17 +194,19 @@ AI: ...
 **已实现**
 
 - 非流式多轮对话 + **流式（SSE）逐字输出**，上下文在进程内存中累积
-- REPL 命令：`/clear` `/history` `/model`
+- REPL 命令：`/clear` `/history` `/model` `/sessions`
 - 思考过程默认不展开，仅在 stderr 给一行 `[思考中…]` 指示
 - `system` / `user` / `assistant` 三种 role 的消息组装
 - 最小错误处理：API 报错打印到 **stderr** 后继续循环，不崩溃、不污染上下文；
   模型回答**与命令结果**走 stdout，两条流互不干扰
   （`pnpm start > answers.txt` 里只有回答与命令结果，没有报错）
+- 会话持久化：JSONL 事件流落在 `.sessions/`，`--resume <id>` 恢复，`/sessions` 列出。
+  **本次未补自动化测试**，验证靠手动冒烟；欠账与将来的补测清单见
+  `docs/superpowers/specs/2026-09-24-ai-chat-m3-design.md` §12
 
 **尚未实现（后续增量）**
 
 - 命令：`/usage`（Token 统计尚未实现，属 M4）
-- 会话持久化（JSONL 落盘、`--resume`）
 - token 统计 / 成本账本、上下文预算裁剪
 - 错误分类与自动重试、`--timeout`、`-p` 一次性模式
 
