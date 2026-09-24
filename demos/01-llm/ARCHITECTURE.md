@@ -12,7 +12,7 @@ cli/      readline 主循环、打印、配置解析
   ↓  只依赖 core 与 llm 的公开接口
 core/     会话状态、消息组装
   ↓  只依赖 core 自身类型
-llm/      DeepSeek adapter：请求构造、响应解析
+llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件归一化
 ```
 
 关键约束（由 spec 规定，代码需遵守）：
@@ -21,8 +21,10 @@ llm/      DeepSeek adapter：请求构造、响应解析
   副作用只允许出现在 `cli/` 与 `src/index.ts`。
 - 边界接口是 `LLMClient`。测试用替身替换它，使 CLI 行为能在**无网络**下断言。
 
-这套骨架为后续增量（streaming / 命令 / 落盘）预留了挂载点：新增能力主要落在
+这套骨架为后续增量（命令 / 落盘 / token 统计）预留了挂载点：新增能力主要落在
 `llm/`（如何调用）与 `cli/`（如何交互），`core/` 保持稳定。
+**streaming（M2a）已经按这个方式落过一遍** —— 新增 `llm/sse.ts` 与 `cli/render.ts`
+两个文件，`core/types.ts` 只多了几个类型，`core/session.ts` 只多了一个 `model` 存取器。
 
 ## 模块职责
 
@@ -46,7 +48,8 @@ llm/      DeepSeek adapter：请求构造、响应解析
 
 ```ts
 export interface LLMClient {
-  chat(messages: Message[]): Promise<ChatResult>;
+  chat(messages: Message[], options?: ChatOptions): Promise<ChatResult>;
+  chatStream(messages: Message[], options?: ChatOptions): AsyncIterable<StreamEvent>;
 }
 
 export interface LLMClientConfig {
@@ -57,6 +60,10 @@ export interface LLMClientConfig {
 
 export type LLMClientFactory = (config: LLMClientConfig) => LLMClient;
 ```
+
+`ChatOptions` 是**每次请求**的参数（目前只有 `model`，将来还会加 thinking 开关），
+定义在 `core/types.ts`。它随请求传，而不是塞进 `LLMClientConfig` —— 否则 client
+会变成有状态的，多会话共享时互相污染（见 D17）。
 
 - `cli/repl.ts` 只依赖 `LLMClient`，不知道 DeepSeek 的存在。
 - `llm/deepseek.ts` 是它的一个实现。

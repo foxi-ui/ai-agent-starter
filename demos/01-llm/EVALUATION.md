@@ -56,7 +56,7 @@ M1（本次增量）自身的交付目标 —— **非流式多轮对话 + 最�
 
 - `src/core/session.ts`：`append(role, content)` 累积；`toMessages(systemPrompt)` 组装 `[system, ...历史]`
 - 离线断言：
-  - `test/session.test.ts`（2 例）—— 按序保存、`system` 在最前
+  - `test/session.test.ts`（共 3 例）—— 按序保存、`system` 在最前
   - `test/repl.test.ts`「多轮对话上下文按序累积」—— 断言第二轮**实际发出的 messages 数组形状**
 - 真实网络：第二轮问「用一句话总结刚才的内容」，回答正确复述了第一轮的 React Server Components 主题
 
@@ -77,7 +77,7 @@ M1（本次增量）自身的交付目标 —— **非流式多轮对话 + 最�
 | 错误输出去向 | **stderr**；stdout 只承载模型回答 |
 | 缺 `DEEPSEEK_API_KEY` | stderr 提示 + **退出码 1** |
 
-**离线证据**：`test/deepseek.test.ts`（6 例）、`test/repl.test.ts`（4 例）、`test/index.test.ts`（1 例，子进程断言退出码）
+**离线证据**：`test/deepseek.test.ts`（共 23 例）、`test/repl.test.ts`（共 9 例）、`test/index.test.ts`（共 1 例，子进程断言退出码）
 
 **未做（属 M6）**
 

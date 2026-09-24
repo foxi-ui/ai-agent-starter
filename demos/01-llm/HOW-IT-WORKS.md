@@ -29,16 +29,23 @@ readline 读到一行
 
 ### 1. 读取一行
 
-`src/cli/repl.ts` 用 `readline` 的**异步迭代器**逐行消费输入：
+`src/cli/repl.ts` 用 `readline` 的**异步迭代器**逐行消费输入，但**手写迭代**而不是
+`for await`：
 
 ```ts
-for await (const line of rl) { ... }
+const lines = rl[Symbol.asyncIterator]();
+// ...
+writePrompt();                      // 提示符必须写在「读取」之前
+const { value: line, done } = await lines.next();
 ```
 
-选择 `for await` 而不是 `rl.on('line', ...)` 的原因：每行的处理包含
-`await client.chat(...)`。事件回调无法自然地串行化异步工作，快速连续输入时
-会并发发起请求，导致上下文顺序错乱。异步迭代器保证**上一轮完全结束后**
-才处理下一行。
+不用 `rl.on('line', ...)` 的原因：每行的处理包含 `await`（消费
+`client.chatStream(...)` 返回的整个事件流）。事件回调无法自然地串行化异步工作，
+快速连续输入时会并发发起请求，导致上下文顺序错乱。异步迭代器保证
+**上一轮完全结束（流读到底）后**才处理下一行。
+
+之所以不写成 `for await (const line of rl)`：提示符必须在**读取下一行之前**写出，
+而 `for await` 把「读取」藏在语法里，拿不到这个时机（见 D15）。串行语义不变。
 
 循环在输入流关闭（EOF / Ctrl-D）时自然退出。
 
@@ -72,12 +79,26 @@ session.toMessages(SYSTEM_PROMPT)
 POST {baseUrl}/chat/completions
 headers: { 'content-type': 'application/json',
            authorization: `Bearer ${apiKey}` }
-body:    { model, messages }
+body:    { model, messages, stream: true }
 ```
 
-**非流式**：一次请求拿完整响应，不做 SSE 解析。
+**流式**：body 只发这三个字段，**不发 `stream_options`** —— 官方文档没有要求流式
+必须带它（依赖方向是反的：单独传 `stream_options` 才返回 400），而 M2 也不消费
+`usage`，发了没有收益（见 `01-full-design.md` §6）。
 
-### 5. 解析响应
+响应是一个 SSE **字节流**，要经过三步才变成 `StreamEvent`：
+
+```text
+response.body.getReader()  逐块 read 出 Uint8Array
+      ↓  TextDecoder({ stream: true }).decode(chunk)   跨块的多字节字符在这里补齐
+      ↓  parseSse(chunk, buffer) → { events, rest }    纯函数分帧，残缺的尾巴进 rest
+      ↓  归一化                                          data 里的 JSON → StreamEvent
+```
+
+### 5. 解析响应（`chat()` 的非流式路径）
+
+流式路径的正文来自下面 §6 的 `text-delta` 累积。而 `chat()` 这条**非流式**路径
+仍然保留着（见 D16），它一次拿到完整 JSON，解析方式没变：
 
 ```ts
 const content = data.choices[0]?.message?.content ?? '';
@@ -85,12 +106,24 @@ const content = data.choices[0]?.message?.content ?? '';
 
 逐层可选链，缺字段时回落为空串——**任何一层缺失都不会抛错**。
 
-### 6. 追加 assistant 并打印
+### 6. 渲染事件并追加 assistant
+
+正文由**渲染器**（`src/cli/render.ts`）逐块写到 stdout：第一个 `text-delta` 到达时
+先写 `AI: ` 前缀，之后每来一块正文就接着写，**不补换行**（换行统一由收尾负责）。
 
 ```ts
-session.append('assistant', result.content);
-write(result.content);
+for await (const event of stream) {
+  renderer.onEvent(event);                                // 呈现：stdout 出正文、stderr 出指示
+  if (event.type === 'text-delta') text += event.text;    // 累积：由 repl 自己攒
+}
+session.append('assistant', text);
 ```
+
+累积**不在渲染器里做**：只有攒出完整正文才能写进 `Session` 当上下文，那是 repl 的
+职责；渲染器只管「这一轮在终端上长什么样」。
+
+`renderer.finish()` 在 `finally` 里调用，保证正文后有**且只有一个**换行 —— 否则下一次
+`You: ` 提示符会接在半句话后面。正常与异常路径都走它。
 
 这一步让下一轮能「记得」刚才的回答，从而支持「总结刚才内容」。
 
@@ -200,7 +233,9 @@ AI: ...
 | 行为 | 测试 |
 | --- | --- |
 | 消息按序累积、`system` 在最前 | `test/session.test.ts` |
-| 请求体 / 响应解析 / 401 抛错 / 空 content / fetch 抛错 / 非 JSON 错误体 | `test/deepseek.test.ts`（mock `globalThis.fetch`） |
+| SSE 分帧：一次多事件、事件跨两次 read、注释行、多行 data、`\r\n` 跨块、半条事件残留 | `test/sse.test.ts`（纯函数，喂字符串） |
+| 请求体 / 响应解析 / 401 抛错 / 空 content / fetch 抛错 / 非 JSON 错误体 / 流式事件序列、末 chunk 的 `finish_reason`、空闲超时、多字节切分 | `test/deepseek.test.ts`（mock `globalThis.fetch`） |
+| 正文走 stdout、思考指示与截断警告走 stderr、`finish` 只补一个换行 | `test/render.test.ts`（注入两条流） |
 | 一问一答、错误写 stderr 不污染 stdout、报错后继续、多轮上下文形状 | `test/repl.test.ts`（fake `LLMClient`） |
 | 缺 key 抛错、默认值、环境变量覆盖 | `test/config.test.ts` |
 | 缺 key 时 stderr 提示 + 退出码 1 | `test/index.test.ts`（子进程集成测试） |

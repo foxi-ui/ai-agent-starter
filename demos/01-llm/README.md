@@ -8,8 +8,8 @@ CLI 模式下的 AI 对话工具，**不使用 LangChain，直接调用 DeepSeek
 LLM API → 消息结构 → 上下文管理 → Streaming → 错误处理 → Token 统计
 ```
 
-> **当前范围：仅「对话部分」**——非流式多轮对话 + 最小错误处理。
-> 完整功能蓝图（streaming、命令、落盘、token 统计等）见 [`docs/01-full-design.md`](docs/01-full-design.md)。
+> **当前范围：仅「对话部分」**——多轮对话（非流式 + **流式 SSE**）+ 最小错误处理。
+> 完整功能蓝图（命令、落盘、token 统计、structured output 等）见 [`docs/01-full-design.md`](docs/01-full-design.md)。
 
 ## 环境要求
 
@@ -120,7 +120,7 @@ AI: ...
     core/types.ts       # Message / Role / ChatResult / StreamEvent / ChatOptions 类型
     core/session.ts     # 会话：消息数组、append、toMessages
     llm/client.ts       # LLMClient 接口（测试替身的接缝）
-    llm/deepseek.ts     # DeepSeek adapter：非流式调用 + 响应解析
+    llm/deepseek.ts     # DeepSeek adapter：非流式 + 流式调用、响应解析
     llm/sse.ts          # SSE 分帧（纯函数）
   test/
     session.test.ts

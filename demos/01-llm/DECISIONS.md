@@ -293,7 +293,7 @@ AI: ...
 
 - 这是学习项目。「非流式」与「流式」两条 wire 路径对照着看，正是阶段 0 要学的东西。
 - 把 `chat()` 改成在 `chatStream()` 之上收集事件虽然只有一条路径，但会作废
-  `deepseek.test.ts` 现有 6 个用例（它们喂的是 JSON 响应，不是 SSE）。
+  `deepseek.test.ts` 原有的 6 个非流式用例（它们喂的是 JSON 响应，不是 SSE）。
 
 **代价**：`deepseek.ts` 里有两个请求构造点（各 2–3 个键，差异只有一个 `stream: true`）。
 **特意不抽 `buildBody()`** —— 为这点差异抽 helper 会让「这次到底发了什么」变得不直观。
