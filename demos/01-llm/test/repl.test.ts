@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable, Writable } from 'node:stream';
 import { runRepl, SYSTEM_PROMPT } from '@/cli/repl.ts';
+import type { SessionStore } from '@/core/journal.ts';
 import type { LLMClient } from '@/llm/client.ts';
 
 function collector(): { chunks: string[]; stream: Writable } {
@@ -50,6 +51,22 @@ function fakeClient(answers: Array<string | Error>): LLMClient {
   };
 }
 
+// 假 store：本次不落盘的断言，只为了让 runRepl 的 options 凑齐。
+// 它必须**不抛错** —— 真 store 在磁盘出问题时会抛，那是 repl 的降级路径，
+// 不属于这两个既有用例要覆盖的行为。
+function fakeStore(): SessionStore {
+  return {
+    create() {},
+    append() {},
+    load() {
+      return null;
+    },
+    list() {
+      return [];
+    },
+  };
+}
+
 function inputFrom(lines: string[]): Readable {
   return Readable.from(lines.map((l) => l + '\n'));
 }
@@ -63,6 +80,9 @@ test('一问一答：输出是 You:/AI: 交替的对话记录', async () => {
     errorOutput: errStream,
     model: 'deepseek-flash',
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
   });
   // 逐字节断言，而不是 some() + includes()：
   // 后者对「有几个提示符」「有没有 AI: 」都恒为真。
@@ -88,6 +108,9 @@ test('多轮：每一问前都有 You: 提示符，每一答前都有 AI: 前缀
     errorOutput: errStream,
     model: 'deepseek-flash',
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
   });
   assert.equal(chunks.join(''), 'You: AI: 回答一\nYou: AI: 回答二\nYou: ');
 });
@@ -101,6 +124,9 @@ test('失败轮次不输出 AI: 前缀', async () => {
     errorOutput: errStream,
     model: 'deepseek-flash',
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
   });
   // 关键：绝不能留下一个「有 AI: 但后面什么都没有」的空壳。
   // stdout 里只有两个提示符（第二个是 EOF 前写出的那个），没有任何 AI:。
@@ -118,6 +144,9 @@ test('错误写 stderr，不污染 stdout', async () => {
     errorOutput: errStream,
     model: 'deepseek-flash',
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
   });
   const err = errChunks.join('');
   assert.ok(err.startsWith('[error]'));
@@ -136,6 +165,9 @@ test('非 2xx 错误不崩溃，继续下一轮', async () => {
     errorOutput: errStream,
     model: 'deepseek-flash',
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
   });
   const joined = chunks.join('');
   assert.ok(joined.includes('恢复'));
@@ -160,6 +192,9 @@ test('多轮对话上下文按序累积', async () => {
     errorOutput: errStream,
     model: 'deepseek-flash',
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
   });
   assert.equal(sent.length, 2);
   assert.deepEqual(sent[1], [
@@ -189,6 +224,9 @@ test('正文逐字写 stdout，思考指示只写 stderr', async () => {
     output: stream,
     errorOutput: errStream,
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
     model: 'deepseek-flash',
   });
 
@@ -217,6 +255,9 @@ test('流中途失败：不追加 assistant，且补上收尾换行', async () =
     output: stream,
     errorOutput: errStream,
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
     model: 'deepseek-flash',
   });
 
@@ -254,6 +295,9 @@ test('流中途失败：收尾换行写在该行的错误之前（跨流字节�
     output: stream,
     errorOutput: stream,
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
     model: 'deepseek-flash',
   });
 
@@ -279,6 +323,9 @@ test('/clear 之后下一轮的 messages 只剩 system 与当前提问', async (
     output: stream,
     errorOutput: errStream,
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
     model: 'deepseek-flash',
   });
 
@@ -310,6 +357,9 @@ test('命令本身不进入上下文', async () => {
     output: stream,
     errorOutput: errStream,
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
     model: 'deepseek-flash',
   });
 
@@ -343,6 +393,9 @@ test('/model 切换后下一轮请求带上新模型', async () => {
     output: stream,
     errorOutput: errStream,
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
     model: 'deepseek-flash',
   });
 
@@ -368,6 +421,9 @@ test('未知命令走 stderr，且不触发请求', async () => {
     output: stream,
     errorOutput: errStream,
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
     model: 'deepseek-flash',
   });
 
@@ -398,6 +454,9 @@ test('未知命令之后循环继续，不是 break 出 REPL', async () => {
     output: stream,
     errorOutput: errStream,
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
     model: 'deepseek-flash',
   });
 
@@ -416,6 +475,9 @@ test('/history 的列表走 stdout', async () => {
     output: stream,
     errorOutput: errStream,
     prompt: 'You: ',
+    sessionId: '20260924-143022-a3f1',
+    history: [],
+    store: fakeStore(),
     model: 'deepseek-flash',
   });
 

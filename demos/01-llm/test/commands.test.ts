@@ -2,6 +2,24 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseCommand, executeCommand, COMMAND_NAMES } from '@/core/commands.ts';
 import { Session } from '@/core/session.ts';
+import type { SessionStore } from '@/core/journal.ts';
+
+// 假 store：/sessions 命令唯一需要的外部依赖。
+// 本次不给它加断言 —— 只为了让现有的 executeCommand 调用点能编译通过。
+function fakeStore(): SessionStore {
+  return {
+    create() {},
+    append() {},
+    load() {
+      return null;
+    },
+    list() {
+      return [];
+    },
+  };
+}
+
+const deps = { store: fakeStore(), currentSessionId: '20260924-143022-a3f1' };
 
 test('不以 / 开头不是命令', () => {
   assert.deepEqual(parseCommand('今天天气怎么样'), { kind: 'none' });
@@ -55,7 +73,7 @@ test('executeCommand /clear 清空并返回条数', () => {
   s.append('user', 'a');
   s.append('assistant', 'b');
 
-  assert.deepEqual(executeCommand('clear', '', s), { kind: 'cleared', removed: 2 });
+  assert.deepEqual(executeCommand('clear', '', s, deps), { kind: 'cleared', removed: 2 });
   assert.deepEqual(s.toMessages(''), []);
 });
 
@@ -63,7 +81,7 @@ test('executeCommand /history 返回当前消息', () => {
   const s = new Session('deepseek-flash');
   s.append('user', 'a');
 
-  assert.deepEqual(executeCommand('history', '', s), {
+  assert.deepEqual(executeCommand('history', '', s, deps), {
     kind: 'history',
     messages: [{ role: 'user', content: 'a' }],
   });
@@ -71,12 +89,12 @@ test('executeCommand /history 返回当前消息', () => {
 
 test('executeCommand /history 空会话返回空数组', () => {
   const s = new Session('deepseek-flash');
-  assert.deepEqual(executeCommand('history', '', s), { kind: 'history', messages: [] });
+  assert.deepEqual(executeCommand('history', '', s, deps), { kind: 'history', messages: [] });
 });
 
 test('executeCommand /model 无参数是查询', () => {
   const s = new Session('deepseek-flash');
-  assert.deepEqual(executeCommand('model', '', s), {
+  assert.deepEqual(executeCommand('model', '', s, deps), {
     kind: 'model-current',
     model: 'deepseek-flash',
   });
@@ -84,7 +102,7 @@ test('executeCommand /model 无参数是查询', () => {
 
 test('executeCommand /model 带参数是切换，且真的改到 Session', () => {
   const s = new Session('deepseek-flash');
-  assert.deepEqual(executeCommand('model', 'deepseek-v4-pro', s), {
+  assert.deepEqual(executeCommand('model', 'deepseek-v4-pro', s, deps), {
     kind: 'model-changed',
     model: 'deepseek-v4-pro',
   });
@@ -93,7 +111,7 @@ test('executeCommand /model 带参数是切换，且真的改到 Session', () =>
 
 test('/model 不校验名字（有意为之）', () => {
   const s = new Session('deepseek-flash');
-  assert.deepEqual(executeCommand('model', '随便写的名字', s), {
+  assert.deepEqual(executeCommand('model', '随便写的名字', s, deps), {
     kind: 'model-changed',
     model: '随便写的名字',
   });
@@ -106,7 +124,7 @@ test('/model 只有尾随空白视为空参数（trim 后等价于查询）', ()
   assert.deepEqual(parseCommand('/model\t'), { kind: 'known', name: 'model', argument: '' });
 
   const s = new Session('deepseek-flash');
-  assert.deepEqual(executeCommand('model', '', s), {
+  assert.deepEqual(executeCommand('model', '', s, deps), {
     kind: 'model-current',
     model: 'deepseek-flash',
   });
@@ -141,7 +159,7 @@ test('executeCommand /model 查询分支一次都不写 session.model', () => {
     },
   });
 
-  assert.deepEqual(executeCommand('model', '', s), {
+  assert.deepEqual(executeCommand('model', '', s, deps), {
     kind: 'model-current',
     model: 'deepseek-flash',
   });

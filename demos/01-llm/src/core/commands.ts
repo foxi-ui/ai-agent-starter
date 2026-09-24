@@ -8,9 +8,10 @@
 
 import type { Message } from '@/core/types.ts';
 import type { Session } from '@/core/session.ts';
+import type { SessionSummary, SessionStore } from '@/core/journal.ts';
 
 /** 当前支持的命令名 */
-export type CommandName = 'clear' | 'history' | 'model';
+export type CommandName = 'clear' | 'history' | 'model' | 'sessions';
 
 /**
  * 全部可用命令。
@@ -18,7 +19,7 @@ export type CommandName = 'clear' | 'history' | 'model';
  * 未知命令的提示文案由它拼出来（见 `cli/render.ts`），
  * 所以新增命令只要改这一处。
  */
-export const COMMAND_NAMES: readonly CommandName[] = ['clear', 'history', 'model'];
+export const COMMAND_NAMES: readonly CommandName[] = ['clear', 'history', 'model', 'sessions'];
 
 /**
  * 一行输入的解析结果。
@@ -32,12 +33,26 @@ export type ParsedCommand =
   | { kind: 'known'; name: CommandName; argument: string }
   | { kind: 'unknown'; input: string };
 
+/**
+ * 命令层需要的外部依赖。
+ *
+ * `/sessions` 要读会话目录，而 core 层不做 IO —— 所以由调用方把
+ * 已经构造好的 store 传进来。与 LLMClient 同一个套路：
+ * 接口在里层、实现在外层、调用方只认接口。
+ */
+export interface CommandDeps {
+  store: SessionStore;
+  /** 当前会话的 id，用于在 /sessions 列表里打 * 标记 */
+  currentSessionId: string;
+}
+
 /** 命令执行的结果，供 cli 层渲染 */
 export type CommandResult =
   | { kind: 'cleared'; removed: number }
   | { kind: 'history'; messages: Message[] }
   | { kind: 'model-current'; model: string }
-  | { kind: 'model-changed'; model: string };
+  | { kind: 'model-changed'; model: string }
+  | { kind: 'sessions'; sessions: SessionSummary[]; currentId: string };
 
 /**
  * 解析一行输入。
@@ -81,11 +96,13 @@ export function parseCommand(line: string): ParsedCommand {
  * @param name 命令名
  * @param argument 参数（可能为空串）
  * @param session 被操作的会话；`/clear` 与 `/model` 会改它
+ * @param deps 命令需要的外部依赖，目前只有 `/sessions` 用到
  */
 export function executeCommand(
   name: CommandName,
   argument: string,
   session: Session,
+  deps: CommandDeps,
 ): CommandResult {
   switch (name) {
     case 'clear':
@@ -112,5 +129,13 @@ export function executeCommand(
       // 写错的模型名交给下一次请求的 API 报错（走 stderr 的现有错误路径）
       session.model = argument;
       return { kind: 'model-changed', model: argument };
+
+    case 'sessions':
+      // 列表来自注入的 store —— core 自己一个文件都不读
+      return {
+        kind: 'sessions',
+        sessions: deps.store.list(),
+        currentId: deps.currentSessionId,
+      };
   }
 }

@@ -197,6 +197,6 @@ test('renderUnknownCommand 写 stderr，可用列表来自 COMMAND_NAMES', () =>
   renderUnknownCommand('/foo', { errorOutput: err.stream });
   assert.equal(
     err.chunks.join(''),
-    '未知命令：/foo。可用：/clear /history /model\n',
+    '未知命令：/foo。可用：/clear /history /model /sessions\n',
   );
 });

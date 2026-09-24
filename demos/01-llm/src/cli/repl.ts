@@ -8,6 +8,8 @@ import { createInterface } from 'node:readline';
 import { Session } from '@/core/session.ts';
 import { parseCommand, executeCommand } from '@/core/commands.ts';
 import { createStreamRenderer, renderCommandResult, renderUnknownCommand } from '@/cli/render.ts';
+import type { Message } from '@/core/types.ts';
+import type { SessionStore } from '@/core/journal.ts';
 import type { LLMClient } from '@/llm/client.ts';
 
 /**
@@ -35,6 +37,12 @@ export interface ReplOptions {
   prompt: string;
   /** 会话的初始模型，通常来自 resolveConfig 的 config.model */
   model: string;
+  /** 本次会话的 id，落盘时用它定位文件 */
+  sessionId: string;
+  /** 恢复出来的历史消息；新会话传空数组 */
+  history: Message[];
+  /** 会话存储。落盘失败时的降级策略见下面的 onChange */
+  store: SessionStore;
 }
 
 /**
@@ -48,14 +56,43 @@ export async function runRepl(
   client: LLMClient,
   options: ReplOptions,
 ): Promise<void> {
-  // 一整段对话的消息记录，循环期间一直被复用
-  const session = new Session(options.model);
   const rl = createInterface({ input: options.input, output: options.output });
 
   // 诊断信息的专用通道。写到 stderr
   const writeError = (text: string) => {
     options.errorOutput.write(text + '\n');
   };
+
+  // 落盘失败的降级：**只警告一次**。
+  // 每轮都刷同一句会把屏幕占满，反而看不见别的；
+  // 但绝不能静默 —— 那会让人以为存下来了，比直接报错更糟。
+  let warnedWriteFailure = false;
+  const reportWriteFailure = (error: unknown): void => {
+    if (warnedWriteFailure) return;
+    warnedWriteFailure = true;
+    writeError(
+      `[警告] 会话写入失败，本次对话将不再记录到磁盘：${(error as Error).message}`,
+    );
+  };
+
+  // 整段对话的消息记录，循环期间一直被复用。
+  //
+  // onChange 就是「落盘」这件事的全部入口：Session 改完状态就喊一声，
+  // 这里把这行追加进文件。之所以不让 repl 在每个变更点手动写，
+  // 是因为 /clear 与 /model <name> 是 executeCommand **内部**改的状态，
+  // 这里看不见它们 —— 靠记得写的写法迟早漏。
+  const session = new Session(options.model, {
+    history: options.history,
+    onChange: (change) => {
+      try {
+        options.store.append(options.sessionId, change);
+      } catch (error) {
+        // 磁盘满、只读目录之类的问题不该打断正在进行的对话：
+        // 内存照常往前走，只是磁盘落后了。
+        reportWriteFailure(error);
+      }
+    },
+  });
 
   // 提示符**刻意不补换行**：它要和用户输入处在同一行（终端会回显输入），
   // 补了换行就会把问题顶到下一行，与文档里的 `You: 什么是...` 不符
@@ -94,7 +131,10 @@ export async function runRepl(
       }
 
       if (parsed.kind === 'known') {
-        const result = executeCommand(parsed.name, parsed.argument, session);
+        const result = executeCommand(parsed.name, parsed.argument, session, {
+          store: options.store,
+          currentSessionId: options.sessionId,
+        });
         // 命令结果走 stdout：用户主动索要的输出
         renderCommandResult(result, { output: options.output });
         continue;

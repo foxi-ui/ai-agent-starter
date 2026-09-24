@@ -8,8 +8,14 @@ import { isValidSessionId } from '@/core/journal.ts';
 /** 本次启动的形态：开新会话，或恢复一个已存在的会话 */
 export type Args = { kind: 'fresh' } | { kind: 'resume'; id: string };
 
-/** 用法提示。出错时附在错误信息后面 —— 用户看到的第一眼就知道该怎么写 */
-const USAGE = '用法：pnpm start [-- --resume <会话 id>]';
+/**
+ * 用法提示。出错时附在错误信息后面 —— 用户看到的第一眼就知道该怎么写。
+ *
+ * **不要写成 `pnpm start -- --resume <id>`**：实测（pnpm 10.34.5）那个 `--`
+ * 会被原样转发进来、成为 argv[0]，于是报「未知参数：--」。这与 npm 的
+ * 「`--` 之后才是脚本参数」惯例相反，所以这里按实测结果写。
+ */
+const USAGE = '用法：pnpm start [--resume <会话 id>]';
 
 /**
  * 解析 `process.argv.slice(2)`（即去掉 node 与脚本路径之后的部分）。

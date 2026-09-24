@@ -107,6 +107,22 @@ function truncate(text: string): string {
 }
 
 /**
+ * 从会话 id 里切出 `MM-DD HH:MM` 供展示。
+ *
+ * 直接切片而不是解析 meta 里的 createdAt：id 里的时间**本来就是本地时间**
+ * （见 core/journal.ts 的 makeSessionId），切片零换算、且在哪台机器上都一样。
+ * 走 createdAt 则要 new Date(iso) 再取本机时区，同一份文件换个 TZ 就显示成
+ * 另一个时间 —— 列表是拿来比对的，那样很别扭。
+ *
+ * id 的格式已由 isValidSessionId 保证，所以这里的切片不会越界。
+ */
+function formatSessionTime(id: string): string {
+  // YYYYMMDD-HHMMSS-xxxx
+  // 0123456789...
+  return `${id.slice(4, 6)}-${id.slice(6, 8)} ${id.slice(9, 11)}:${id.slice(11, 13)}`;
+}
+
+/**
  * 渲染命令的执行结果。
  *
  * 走 **stdout**：这是用户主动索要的输出，`pnpm start > answers.txt` 里
@@ -144,8 +160,23 @@ export function renderCommandResult(
       return;
     }
 
+    case 'sessions': {
+      if (result.sessions.length === 0) {
+        write('(还没有历史会话)');
+        return;
+      }
+      for (const session of result.sessions) {
+        // 当前会话行首打 *，其余行首补一个空格，这样两列对齐
+        const marker = session.id === result.currentId ? '*' : ' ';
+        write(
+          `${marker} ${session.id}  ${formatSessionTime(session.id)}  ${session.messageCount} 条`,
+        );
+      }
+      return;
+    }
+
     default: {
-      // 穷尽性守卫：给 CommandResult 加第 5 个变体却忘了在这里处理时，
+      // 穷尽性守卫：给 CommandResult 再加一个变体却忘了在这里处理时，
       // 这行会编译报错，而不是让用户敲了新命令只看到空屏。
       const _exhaustive: never = result;
       void _exhaustive;
