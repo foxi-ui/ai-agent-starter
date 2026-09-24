@@ -9,7 +9,7 @@
 ```text
 TypeCheck: PASS  (tsc --noEmit 退出码 0)
 Lint:      N/A   (本仓库未配置 linter)
-Test:      PASS  (node --test 91/91，退出码 0)
+Test:      PASS  (node --test 167/167，退出码 0)
 Build:     N/A   (noEmit，Node 直接运行 .ts，无构建产物)
 ```
 
@@ -120,6 +120,13 @@ M1 自身的交付目标 —— **非流式多轮对话 + 最小错误处理** �
 | 命令解析三态（none / known / unknown）、`/clear` `/history` `/model` 的执行结果、`/model` 查询分支不写 `session.model` | `test/commands.test.ts`（纯函数，直接调 `parseCommand` / `executeCommand`） |
 | 缺 key 抛错、默认值、环境变量覆盖 | `test/config.test.ts` |
 | 缺 key 时 stderr 提示 + 退出码 1 | `test/index.test.ts`（子进程集成测试） |
+| JSONL 记录的两向格式契约、坏行/未知 type 跳过、回放（`clear` 清消息不清模型、meta 定初始、model 覆盖）、id 生成与白名单 | `test/journal.test.ts`（纯函数，喂字符串） |
+| 会话文件读写：meta 独占创建不覆盖、append 追加、load 的坏行计数与 ENOENT/EISDIR 之分、list 的倒序与条数、路径穿越被拒 | `test/store.test.ts`（**真临时目录，不 mock `node:fs`**） |
+| `--resume` 参数解析：缺值 / 非法 id / 多余参数 / 未知参数各自抛错并附用法 | `test/args.test.ts`（纯函数） |
+| 变更广播：三个变更点各广播一次、只读操作零广播、构造时铺入 history **不**广播 | `test/session.test.ts` |
+| 落盘接线与降级：一轮两条记录、`/clear` `/model` 也落盘、写盘失败只警告一次且对话继续 | `test/repl.test.ts`（记录型假 store） |
+| `/sessions` 列表渲染：`*` 标记、时间列就地切片、空表提示 | `test/render.test.ts` |
+| 启动分支：退出码 1 的四种情况、新会话落盘恰一行 meta、resume **不改动日志长度**、坏行警告、模型回落 | `test/index.test.ts`（子进程集成测试） |
 
 ```bash
 pnpm test
@@ -127,8 +134,10 @@ pnpm test
 
 **为什么退出码要用子进程测**：退出码是**进程级**行为。`resolveConfig` 的单元测试只能断言
 「会抛错」，断言不了「进程最终以 1 退出」—— 把 `process.exit(1)` 改成 `throw`，
-单元测试依然全绿，而脚本与 CI 的判断依据已经坏了。该用例不触网（缺 key 时程序在发起
-请求前就退出），因此不会让测试变慢或不稳定。
+单元测试依然全绿，而脚本与 CI 的判断依据已经坏了。这些用例都不触网：退出码为 1 的那几种
+情况都发生在发起任何网络请求之前，其余用例则让 stdin 立刻结束（不产生对话）或只跑
+`/model` 这类纯查询命令，因此不会让测试变慢或不稳定。**它们也全部把 `AI_CHAT_HOME`
+指向各自的临时目录**，不会碰仓库里的 `.sessions/`。
 
 ## 相关决策
 

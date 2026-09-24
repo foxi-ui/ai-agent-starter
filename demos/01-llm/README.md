@@ -102,7 +102,7 @@ AI: ...
 | --- | --- |
 | `pnpm start` | 启动 REPL（新会话） |
 | `pnpm start --resume <id>` | 恢复指定会话，接着上次聊 |
-| `pnpm test` | 运行全部测试（`node --test`，当前 91 个用例） |
+| `pnpm test` | 运行全部测试（`node --test`，当前 167 个用例） |
 | `pnpm run typecheck` | 类型检查（`tsc --noEmit`） |
 
 命令的事实来源是 `package.json` 的 `scripts` 字段。
@@ -179,14 +179,17 @@ pnpm start --resume 20260924-224330-a3f1
     llm/deepseek.ts     # DeepSeek adapter：非流式 + 流式调用、响应解析
     llm/sse.ts          # SSE 分帧（纯函数）
   test/
-    session.test.ts
+    session.test.ts     # 消息累积、history 副本、变更广播（onChange）
     deepseek.test.ts
     sse.test.ts         # SSE 分帧（纯函数）
-    render.test.ts      # StreamEvent → stdout/stderr
-    repl.test.ts
+    render.test.ts      # StreamEvent / CommandResult → stdout/stderr
+    repl.test.ts        # REPL 主循环 + 落盘接线与降级
     config.test.ts
-    index.test.ts       # 入口集成测试（子进程，验证退出码）
+    index.test.ts       # 入口集成测试（子进程，验证退出码与会话文件）
     commands.test.ts    # 命令解析与执行（纯函数，无需捕获输出）
+    journal.test.ts     # 日志格式、解析、回放、id 生成与校验（纯函数）
+    store.test.ts       # 会话存储的文件实现（真临时目录，不 mock fs）
+    args.test.ts        # --resume 的参数解析（纯函数）
 ```
 
 ## 当前能力边界
@@ -201,8 +204,8 @@ pnpm start --resume 20260924-224330-a3f1
   模型回答**与命令结果**走 stdout，两条流互不干扰
   （`pnpm start > answers.txt` 里只有回答与命令结果，没有报错）
 - 会话持久化：JSONL 事件流落在 `.sessions/`，`--resume <id>` 恢复，`/sessions` 列出。
-  **本次未补自动化测试**，验证靠手动冒烟；欠账与将来的补测清单见
-  `docs/superpowers/specs/2026-09-24-ai-chat-m3-design.md` §12
+  自动化测试见 `test/journal.test.ts`（格式与回放）、`test/store.test.ts`（真临时目录上的
+  读写与路径安全）、`test/args.test.ts`（参数解析），以及 `test/index.test.ts` 的子进程用例
 
 **尚未实现（后续增量）**
 

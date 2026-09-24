@@ -200,3 +200,78 @@ test('renderUnknownCommand 写 stderr，可用列表来自 COMMAND_NAMES', () =>
     '未知命令：/foo。可用：/clear /history /model /sessions\n',
   );
 });
+
+// ── /sessions 的列表渲染（spec §10）────────────────────────────────────
+//
+// 时间列从 id 里**就地切片**得来（id 前 15 位就是本地时间），所以这里的期望值
+// 全是手写字面量 —— 切片下标写错一位，下面每条都会现形。
+
+test('renderCommandResult /sessions 每行一个会话，当前会话行首打 *', () => {
+  const out = collector();
+  renderCommandResult(
+    {
+      kind: 'sessions',
+      sessions: [
+        { id: '20260924-143022-a3f1', messageCount: 6 },
+        { id: '20260923-101500-7c2e', messageCount: 12 },
+      ],
+      currentId: '20260924-143022-a3f1',
+    },
+    { output: out.stream },
+  );
+
+  // 逐字节断言：行首标记、列间**两个**空格、时间格式、`N 条` 全在这两行里。
+  // 非当前会话行首是一个空格，于是与 `*` 等宽、两列对齐。
+  assert.equal(
+    out.chunks.join(''),
+    '* 20260924-143022-a3f1  09-24 14:30  6 条\n' +
+      '  20260923-101500-7c2e  09-23 10:15  12 条\n',
+  );
+});
+
+test('renderCommandResult /sessions 当前会话不在列表里时，没有行带 *', () => {
+  const out = collector();
+  renderCommandResult(
+    {
+      kind: 'sessions',
+      sessions: [{ id: '20260924-143022-a3f1', messageCount: 6 }],
+      // 指着一个不在列表里的 id（比如当前会话尚未落盘）
+      currentId: '20991231-235959-ffff',
+    },
+    { output: out.stream },
+  );
+
+  const text = out.chunks.join('');
+  assert.ok(!text.includes('*'), `不该出现 * 标记：${text}`);
+});
+
+test('renderCommandResult /sessions 空列表给明确提示', () => {
+  const out = collector();
+  renderCommandResult({ kind: 'sessions', sessions: [], currentId: 'x' }, { output: out.stream });
+  assert.equal(out.chunks.join(''), '(还没有历史会话)\n');
+});
+
+test('renderCommandResult /sessions 的时间列按 id 精确切片', () => {
+  // 边界：月/日/时/分全是需要补零或需要跨位读取的数字。
+  // 下标写成 slice(4,6)/slice(6,8)/slice(9,11)/slice(11,13) 才对；
+  // 比如把时分写成 slice(10,12)/slice(12,14) 会得到 `90:70`，
+  // 把日写成 slice(7,9) 会得到 `-0`。
+  const out = collector();
+  renderCommandResult(
+    {
+      kind: 'sessions',
+      sessions: [
+        { id: '20260105-090700-0000', messageCount: 0 },
+        { id: '20261231-235959-ffff', messageCount: 1 },
+      ],
+      currentId: '20260105-090700-0000',
+    },
+    { output: out.stream },
+  );
+
+  assert.equal(
+    out.chunks.join(''),
+    '* 20260105-090700-0000  01-05 09:07  0 条\n' +
+      '  20261231-235959-ffff  12-31 23:59  1 条\n',
+  );
+});

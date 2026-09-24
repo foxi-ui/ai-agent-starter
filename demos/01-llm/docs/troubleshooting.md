@@ -629,3 +629,75 @@ $ pnpm --silent start --resume 20260924-224330-a3f1
 都要**实测跑一遍**再落笔 —— 本条的初版（M3 的 spec §9 与计划）就把它写反了。
 
 来源：实测（2026-09-24 实施 M3 的 Task 8 冒烟时发现，pnpm 10.34.5 / node v22.23.2）。
+
+---
+
+## T14（附）补写子进程测试时的三处静默失败
+
+补测 M3（见 `DECISIONS.md` D38）时踩到 / 险些踩到的坑。三条都不会报错，只会让测试
+**静默地什么都不证明**，或者整文件挂死。
+
+**症状一：`node --test` 卡住不返回，最后整文件超时**
+
+用 `spawn` 起子进程测退出码时，若只把 `stdio[0]` 设成 `'pipe'` 却没关掉它，
+子进程永远读不到 stdin 的 EOF，REPL 循环一直等下一行 —— 父进程的 `await` 也就永不返回。
+
+```ts
+// ❌ 挂死：child.stdin 从未 end()，子进程等不到 EOF
+const child = spawn(node, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+// ✅ 无输入时也必须显式关掉
+child.stdin.on('error', () => {});   // 子进程提前退出时写入会拿到 EPIPE，属预期
+if (options.stdin !== undefined) child.stdin.write(lines.map(l => l + '\n').join(''));
+child.stdin.end();
+```
+
+`stdio[0]: 'ignore'` 也能达到「立刻 EOF」的效果（M1 的既有用例就是这么写的），
+但一旦要喂 `/model` 这类命令就必须换成 `'pipe'`，此时别忘了 `end()`。
+
+**症状二：错误路径的用例断言到了别的错因**
+
+`pnpm test` 的脚本带 `--env-file-if-exists=.env --env-file-if-exists=.env.local`，
+所以**父进程里已经加载了真实的 `DEEPSEEK_API_KEY` 与本机 `AI_CHAT_MODEL`**，
+`spawn` 时若不覆盖就会原样继承。于是「`--resume` 非法 id 应当报错」这类用例
+会先撞上「缺 key」（或反过来，被真实配置带偏），要断言的错因根本轮不到出现。
+
+```ts
+// ✅ 构造一个「除了我关心的变量以外都确定」的环境
+function runEnv(home: string, overrides = {}) {
+  return {
+    ...process.env,
+    DEEPSEEK_API_KEY: 'dummy-key-not-used-offline',
+    AI_CHAT_MODEL: 'test-model',
+    AI_CHAT_HOME: home,        // 每个用例一个 mkdtemp，绝不碰仓库的 .sessions/
+    ...overrides,
+  };
+}
+```
+
+**症状三：测「本地时间」的断言在 `TZ=UTC` 的机器上变成空转**
+
+`makeSessionId` 的契约是「取本地时间分量，不用 `toISOString()`」（spec §8）。
+但在零偏移时区里，两种实现的结果**逐字符相同** —— 断言照样绿，却什么都证明不了。
+
+规避：在测试文件的**模块作用域**锚定时区（`node --test` 默认每个测试文件一个子进程，
+作用域只到本文件），并加一条前置条件用例确认赋值真的生效：
+
+```ts
+process.env.TZ = 'Asia/Shanghai';   // 实测：启动时 TZ=UTC 的进程里赋值后 offset 由 0 变 -480
+
+test('前置条件：本进程时区已锚定为 Asia/Shanghai', () => {
+  assert.equal(new Date(2026, 8, 24, 14, 30, 22).getUTCHours(), 6);
+});
+```
+
+注意构造 `Date` 必须用**本地构造器**逐分量喂（`new Date(2026, 8, 24, 14, 30, 22)`）。
+写成 `new Date('2026-09-24T14:30:22Z')` 会让期望值本身依赖机器时区，那才是真正的 flaky。
+
+**教训**
+
+这三条的共同点是「不报错的失败」：挂死、错因错位、断言空转。补写测试时，
+先用**变异检查**（往生产代码里注入缺陷、确认对应用例变红）验证一遍，
+否则「测试全绿」说明不了任何事 —— 这正是 D37 记下的欠账为什么要靠变异检查来还。
+
+来源：2026-09-24 补测 M3 时实测（node v22.23.2 / macOS，TZ=Asia/Shanghai）。

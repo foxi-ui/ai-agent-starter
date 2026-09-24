@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseCommand, executeCommand, COMMAND_NAMES } from '@/core/commands.ts';
 import { Session } from '@/core/session.ts';
-import type { SessionStore } from '@/core/journal.ts';
+import type { SessionStore, SessionSummary } from '@/core/journal.ts';
 
 // 假 store：/sessions 命令唯一需要的外部依赖。
 // 本次不给它加断言 —— 只为了让现有的 executeCommand 调用点能编译通过。
@@ -165,4 +165,91 @@ test('executeCommand /model 查询分支一次都不写 session.model', () => {
   });
   assert.equal(writes, 0, '查询分支不得写 session.model');
   assert.equal(s.model, 'deepseek-flash');
+});
+
+// ── /sessions ─────────────────────────────────────────────────────────
+
+/** 返回指定列表的假 store，并记录 list() 被调用了几次 */
+function listStore(sessions: SessionSummary[]): { store: SessionStore; calls: () => number } {
+  let calls = 0;
+  return {
+    store: {
+      create() {},
+      append() {},
+      load() {
+        return null;
+      },
+      list() {
+        calls += 1;
+        return sessions;
+      },
+    },
+    calls: () => calls,
+  };
+}
+
+// 刻意**不用**模块级的 `deps`：它是跨用例共享的单例（探针会互相污染），
+// 而且它的 currentSessionId 是文件里到处出现的字面量 ——
+// 实现里写死一个常量也能满足断言。这里另造一个没人会碰巧写出来的 id。
+const CURRENT = '20991231-235959-ffff';
+
+test('parseCommand 认识 /sessions，多余参数留在 argument 里', () => {
+  assert.deepEqual(parseCommand('/sessions'), { kind: 'known', name: 'sessions', argument: '' });
+  assert.deepEqual(parseCommand('/sessions extra'), {
+    kind: 'known',
+    name: 'sessions',
+    argument: 'extra',
+  });
+});
+
+test('executeCommand /sessions 原样交出列表与当前会话 id', () => {
+  const { store, calls } = listStore([
+    { id: '20260924-143022-a3f1', messageCount: 6 },
+    { id: '20260923-101500-7c2e', messageCount: 12 },
+  ]);
+
+  const result = executeCommand('sessions', '', new Session('deepseek-flash'), {
+    store,
+    currentSessionId: CURRENT,
+  });
+
+  // 期望值在这里**手写第二遍**，不复用上面传进假 store 的那个数组字面量：
+  // 直接引用同一个数组时，实现返回什么都无所谓，断言恒真。
+  assert.deepEqual(result, {
+    kind: 'sessions',
+    sessions: [
+      { id: '20260924-143022-a3f1', messageCount: 6 },
+      { id: '20260923-101500-7c2e', messageCount: 12 },
+    ],
+    currentId: '20991231-235959-ffff',
+  });
+  // 证明它真的去读了列表，而不是凭空拼了一个空结果
+  assert.equal(calls(), 1);
+});
+
+test('executeCommand /sessions 空表返回空数组，不报错', () => {
+  const { store } = listStore([]);
+  const result = executeCommand('sessions', '', new Session('deepseek-flash'), {
+    store,
+    currentSessionId: CURRENT,
+  });
+
+  assert.deepEqual(result, { kind: 'sessions', sessions: [], currentId: CURRENT });
+});
+
+test('/sessions 忽略多余参数（与 /model 一致，不报错）', () => {
+  const { store } = listStore([{ id: '20260924-143022-a3f1', messageCount: 1 }]);
+  const deps = { store, currentSessionId: CURRENT };
+  const s = new Session('deepseek-flash');
+
+  const withArgument = executeCommand('sessions', 'extra', s, deps);
+  const withoutArgument = executeCommand('sessions', '', s, deps);
+
+  assert.deepEqual(withArgument, {
+    kind: 'sessions',
+    sessions: [{ id: '20260924-143022-a3f1', messageCount: 1 }],
+    currentId: CURRENT,
+  });
+  // 「忽略」的语义：带不带参数，结果完全一样
+  assert.deepEqual(withArgument, withoutArgument);
 });

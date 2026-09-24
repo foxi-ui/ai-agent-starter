@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable, Writable } from 'node:stream';
 import { runRepl, SYSTEM_PROMPT } from '@/cli/repl.ts';
-import type { SessionStore } from '@/core/journal.ts';
+import type { SessionChange, SessionStore } from '@/core/journal.ts';
 import type { LLMClient } from '@/llm/client.ts';
 
 function collector(): { chunks: string[]; stream: Writable } {
@@ -69,6 +69,50 @@ function fakeStore(): SessionStore {
 
 function inputFrom(lines: string[]): Readable {
   return Readable.from(lines.map((l) => l + '\n'));
+}
+
+/** 记录型假 store：捕获每次 append 的 (会话 id, 变更)，供断言落盘内容 */
+function recordingStore(): {
+  store: SessionStore;
+  writes: Array<{ id: string; change: SessionChange }>;
+} {
+  const writes: Array<{ id: string; change: SessionChange }> = [];
+  return {
+    writes,
+    store: {
+      create() {},
+      append(id, change) {
+        writes.push({ id, change });
+      },
+      load() {
+        return null;
+      },
+      list() {
+        return [];
+      },
+    },
+  };
+}
+
+/** 每次 append 都抛错的假 store，用来走「落盘失败降级」那条路径 */
+function failingStore(message: string): { store: SessionStore; attempts: () => number } {
+  let attempts = 0;
+  return {
+    attempts: () => attempts,
+    store: {
+      create() {},
+      append() {
+        attempts += 1;
+        throw new Error(message);
+      },
+      load() {
+        return null;
+      },
+      list() {
+        return [];
+      },
+    },
+  };
 }
 
 test('一问一答：输出是 You:/AI: 交替的对话记录', async () => {
@@ -488,4 +532,171 @@ test('/history 的列表走 stdout', async () => {
   assert.ok(out.includes('1. [user] 第一问'));
   assert.ok(out.includes('2. [assistant] ok'));
   assert.deepEqual(errChunks, []);
+});
+
+// ── 会话落盘（onChange → store.append）──────────────────────────────────
+//
+// Session 在三个变更点广播，repl 收到就追加一行。下面几条钉住这条接线：
+// 广播漏接、接错会话 id、或漏掉某一个变更点，都会在这里现形。
+
+const SESSION_ID = '20260924-143022-a3f1';
+
+test('一轮对话落两条记录：user 与 assistant，用的是本次会话的 id', async () => {
+  const { store, writes } = recordingStore();
+  const { stream, errStream } = captureOutput();
+
+  await runRepl(fakeClient(['你好']), {
+    input: inputFrom(['hi']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: [],
+    store,
+  });
+
+  assert.deepEqual(writes, [
+    { id: SESSION_ID, change: { type: 'message', role: 'user', content: 'hi' } },
+    { id: SESSION_ID, change: { type: 'message', role: 'assistant', content: '你好' } },
+  ]);
+});
+
+test('/clear 与 /model 的变更也落盘（它们在 executeCommand 内部改状态）', async () => {
+  // 这条是「广播」这个设计的立论所在：/clear 与 /model <name> 改的是
+  // executeCommand **内部**的 Session，repl 在调用处看不见这两次变更。
+  // 靠「调用方记得在每处补写」必然漏掉它们；靠 Session 广播则结构上不可能漏。
+  const { store, writes } = recordingStore();
+  const { stream, errStream } = captureOutput();
+
+  await runRepl(fakeClient(['ok']), {
+    input: inputFrom(['问题', '/clear', '/model deepseek-v4-pro']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: [],
+    store,
+  });
+
+  assert.deepEqual(
+    writes.map((w) => w.change),
+    [
+      { type: 'message', role: 'user', content: '问题' },
+      { type: 'message', role: 'assistant', content: 'ok' },
+      { type: 'clear' },
+      { type: 'model', model: 'deepseek-v4-pro' },
+    ],
+  );
+});
+
+test('只读命令一条记录都不写', async () => {
+  const { store, writes } = recordingStore();
+  const { stream, errStream } = captureOutput();
+
+  await runRepl(fakeClient([]), {
+    input: inputFrom(['/history', '/model', '/sessions']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: [],
+    store,
+  });
+
+  // 只读命令若也写盘，日志会莫名其妙地变长，而这些行在回放时什么也不做
+  assert.deepEqual(writes, []);
+});
+
+test('落盘失败：stderr 恰好一行警告，且对话继续（内存照常前进）', async () => {
+  // M3 的降级约定（D34）：append 失败是非致命的 —— 磁盘满、目录只读
+  // 不该打断正在进行的对话。但绝不能静默，那会让人以为存下来了。
+  const { store, attempts } = failingStore('EACCES: permission denied');
+  const { chunks, stream, errChunks, errStream } = captureOutput();
+
+  const sent: Array<{ role: string; content: string }[]> = [];
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream(messages) {
+      sent.push(messages);
+      yield { type: 'text-delta', text: '回答' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['第一问', '第二问']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: [],
+    store,
+  });
+
+  // 警告只出一次：每轮都刷同一句会把屏幕占满，反而看不见别的
+  const errLines = errChunks.join('').split('\n').filter((line) => line !== '');
+  assert.equal(errLines.length, 1, `stderr 应当恰好一行：${JSON.stringify(errChunks.join(''))}`);
+  assert.match(errLines[0], /\[警告\]/);
+  assert.match(errLines[0], /EACCES: permission denied/);
+
+  // 「只警告一次」不等于「只尝试一次」：每次变更仍然都试过写盘（2 轮 × 2 条）
+  assert.equal(attempts(), 4);
+
+  // 对话没被打断，两轮都发出了请求
+  assert.equal(sent.length, 2);
+  // 内存照常前进：第二轮仍带着第一轮的上下文 —— 磁盘落后，但对话是连贯的
+  assert.deepEqual(sent[1], [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: '第一问' },
+    { role: 'assistant', content: '回答' },
+    { role: 'user', content: '第二问' },
+  ]);
+  // 屏幕上两轮都有回答
+  assert.equal(chunks.join(''), 'You: AI: 回答\nYou: AI: 回答\nYou: ');
+});
+
+test('传入的 history 流进第一轮请求（--resume 后「模型记得」的离线代理）', async () => {
+  // 真实网络下的判据是「模型能复述之前聊过什么」，那测不了。这里测的是它的**前提**：
+  // 回放出来的历史必须真的进到第一次请求的 messages 里。
+  // 若 history 只铺进了 Session 却没被 toMessages 带上，这条会红。
+  const sent: Array<{ role: string; content: string }[]> = [];
+  const { store } = recordingStore();
+  const { stream, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream(messages) {
+      sent.push(messages);
+      yield { type: 'text-delta', text: 'ok' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['用一句话总结我们刚才聊的']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: [
+      { role: 'user', content: '用一句话说明什么是闭包' },
+      { role: 'assistant', content: '闭包是函数与其词法作用域的组合' },
+    ],
+    store,
+  });
+
+  assert.deepEqual(sent[0], [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: '用一句话说明什么是闭包' },
+    { role: 'assistant', content: '闭包是函数与其词法作用域的组合' },
+    { role: 'user', content: '用一句话总结我们刚才聊的' },
+  ]);
 });

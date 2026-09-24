@@ -16,7 +16,7 @@ M1 走通了「LLM API → 消息结构 → 上下文管理」，M2 补上 strea
 成功标准：
 
 - 聊完一场，`.sessions/<id>.jsonl` 里能看到完整的对话记录
-- `pnpm start -- --resume <id>` 能接着上次聊，模型确实知道之前说过什么
+- `pnpm start --resume <id>` 能接着上次聊，模型确实知道之前说过什么
 - `/sessions` 能列出历史会话，看得出哪个是当前会话
 - **落盘失败不该毁掉正在进行的对话**
 
@@ -172,7 +172,7 @@ executeCommand(name, argument, session, deps)   // deps: { store, currentSession
 ### 启动
 
 ```text
-pnpm start [-- --resume <id>]
+pnpm start [--resume <id>]
   │
   ├─ resolveConfig(process.env)          // 缺 key → stderr + exit 1（M1 既有行为）
   ├─ parseArgs(process.argv.slice(2))    // 参数非法 → stderr + exit 1
@@ -272,10 +272,16 @@ export type SessionRecord =
   | { type: 'meta'; id: string; createdAt: string; model: string }
   | SessionChange;
 
-/** 一个会话的概要，供 /sessions 展示 */
+/**
+ * 一个会话的概要，供 /sessions 展示。
+ *
+ * 刻意**不含 createdAt**：展示用的时间直接从 id 切（id 前 15 位就是本地时间），
+ * 不必再经过 `new Date(iso)` + 时区换算 —— 那会让同一份文件在不同 TZ 的机器上
+ * 显示成不同的时间，而 id 是死的、在哪台机器上都一样。
+ */
 export interface SessionSummary {
   id: string;
-  createdAt: string;
+  /** `message` 记录的条数；`clear` / `model` 不算 */
   messageCount: number;
 }
 
@@ -479,12 +485,22 @@ for each record:
 **所有抛错消息都附一行用法**：
 
 ```text
-用法：pnpm start [-- --resume <会话 id>]
+用法：pnpm start [--resume <会话 id>]
 ```
 
 **为什么未知参数要报错而不是忽略**：`--resum xxx`（少一个 e）若被静默忽略，就会**悄悄开一个全新会话**，用户以为resume上了、实际前面聊的全丢了。宁可报错。
 
-**已知注意点**：`pnpm start --resume xxx` 里的 `--resume` 可能被 pnpm 自己吃掉，要用 `pnpm start -- --resume xxx`。这条写进 README，实施时实测确认。
+**实测结论（2026-09-24 实施时改）**：原文写「`--resume` 可能被 pnpm 自己吃掉，要用
+`pnpm start -- --resume xxx`」—— **实测正好相反**。pnpm 10.34.5 与 node v22.23.2
+都会把 `--` **原样**作为 `argv[0]` 传给脚本，于是程序报 `未知参数：--` 并退出码 1；
+不加 `--` 的 `pnpm start --resume xxx` 才正常工作（`--resume` 不会被 pnpm 吃掉）。
+
+| 命令 | 脚本收到的 argv | 结果 |
+| --- | --- | --- |
+| `pnpm start -- --resume <id>` | `['--', '--resume', '<id>']` | ❌ 未知参数：`--` |
+| `pnpm start --resume <id>` | `['--resume', '<id>']` | ✅ |
+
+这条**不再需要「实施时实测确认」**，已写进 README 与 `docs/troubleshooting.md` T13。
 
 ---
 
@@ -529,13 +545,21 @@ for each record:
 
 ---
 
-## 12. 验证策略（本次无自动化覆盖）
+## 12. 验证策略（M3 实施时无自动化覆盖）
+
+> **后续进展（2026-09-24 补记）**：本节描述的「本次无自动化覆盖」是 **M3 实施当时**的状态
+> —— 那是用户当时明确要求的取舍（见 `DECISIONS.md` D37）。欠账已在同一日还清：
+> 下表的补测清单逐条落地为 `test/journal.test.ts` / `test/store.test.ts` / `test/args.test.ts`，
+> 另扩充了 `session` / `commands` / `repl` / `render` / `index` 五个既有文件，
+> 用例数 91 → 167，并以 20 条变异检查确认这些用例真的会失败。
+> 详见 `DECISIONS.md` D38（含两条由此发现、尚未修复的生产缺陷）。
+> 本节其余内容保留原样，作为这份 spec 的历史记录。
 
 ### 每次改动都要跑
 
 ```bash
 pnpm run typecheck     # tsc --noEmit，退出码 0
-pnpm test              # 旧用例全绿（用例数不变）
+pnpm test              # 旧用例全绿（用例数不变）※ 该限制已于补测后解除，见本节补记
 ```
 
 ### 手动冒烟（真实网络，不进 CI）
@@ -553,7 +577,7 @@ cat .sessions/<id>.jsonl
 #    且最后一行有换行（用 `tail -c 1 file | xxd` 确认）
 
 # 3) 恢复并追问：模型应记得闭包这个主题
-printf '用一句话总结我们刚才聊的\n' | pnpm --silent start -- --resume <id> 1>out2.txt 2>err2.txt
+printf '用一句话总结我们刚才聊的\n' | pnpm --silent start --resume <id> 1>out2.txt 2>err2.txt
 #    err2.txt 应含 [resumed] <id>（2 条消息）
 #    out2.txt 的回答应能复述「闭包」
 #    且 .sessions/<id>.jsonl 变成 5 行
@@ -563,11 +587,11 @@ printf '/sessions\n' | pnpm --silent start
 #    当前会话那行带 *，条数正确
 
 # 5) /clear 与 /model 落盘
-printf '/clear\n/model deepseek-v4-pro\n' | pnpm --silent start -- --resume <id>
+printf '/clear\n/model deepseek-v4-pro\n' | pnpm --silent start --resume <id>
 #    文件尾部追加 {"type":"clear"} 与 {"type":"model",...}
 
 # 6) 路径穿越被拦
-pnpm start -- --resume ../../etc/passwd ; echo "exit=$?"    # 期望 exit=1
+pnpm start --resume ../../etc/passwd ; echo "exit=$?"    # 期望 exit=1
 
 # 7) 写盘失败降级（只读目录）
 AI_CHAT_HOME=/tmp/readonly-sessions pnpm start   # 先 chmod 555 该目录
@@ -576,9 +600,9 @@ AI_CHAT_HOME=/tmp/readonly-sessions pnpm start   # 先 chmod 555 该目录
 
 **密钥不得进会话**：真实 key 只从 `.env.local` 读，任何贴出来的输出前先做泄漏扫描（对照 `~/.claude/rules/global/security.md`）。
 
-### 将来补测试时该测什么（清单，本次不做）
+### 将来补测试时该测什么（清单，本次不做）—— ✅ 已还清
 
-留着，免得下次从零想：
+留着，免得下次从零想（**已于 2026-09-24 全部落地，见本节开头的补记**）：
 
 | 文件 | 用例 |
 | --- | --- |
@@ -621,6 +645,7 @@ AI_CHAT_HOME=/tmp/readonly-sessions pnpm start   # 先 chmod 555 该目录
 TypeCheck: pnpm run typecheck → 退出码 0
 Lint:      N/A（本仓库未配置 linter）
 Test:      pnpm test → 旧用例全绿（用例数不变，未覆盖本次新增功能）
+           ※ M3 实施当时的验收口径；补测后为 167/167 覆盖新增功能，见 §12 补记
 Build:     N/A（noEmit，Node 直接运行 .ts）
 ```
 
