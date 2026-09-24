@@ -6,7 +6,8 @@
 
 import { createInterface } from 'node:readline';
 import { Session } from '@/core/session.ts';
-import { createStreamRenderer } from '@/cli/render.ts';
+import { parseCommand, executeCommand } from '@/core/commands.ts';
+import { createStreamRenderer, renderCommandResult, renderUnknownCommand } from '@/cli/render.ts';
 import type { LLMClient } from '@/llm/client.ts';
 
 /**
@@ -51,12 +52,7 @@ export async function runRepl(
   const session = new Session(options.model);
   const rl = createInterface({ input: options.input, output: options.output });
 
-  // 统一在这里补换行，省得每个调用点都自己写 '\n'
-  const write = (text: string) => {
-    options.output.write(text + '\n');
-  };
-
-  // 诊断信息的专用通道。与 write 对称，但写到 stderr
+  // 诊断信息的专用通道。写到 stderr
   const writeError = (text: string) => {
     options.errorOutput.write(text + '\n');
   };
@@ -75,7 +71,8 @@ export async function runRepl(
 
   try {
     while (true) {
-      // 写在读取之前而不是本轮处理之后：EOF 时就不会多出一个孤零零的提示符
+      // 每次读取尝试前各写一次。注意：EOF 前那次也会写出，所以输出以 `You: ` 结尾
+      // —— 这是 D15 的「已知边界」，不是 bug
       writePrompt();
 
       const { value: line, done } = await lines.next();
@@ -84,6 +81,24 @@ export async function runRepl(
       const question = line.trim();
       // 空行直接跳过，不进入上下文，避免污染对话历史
       if (question === '') continue;
+
+      // 命令必须在 append 之前处理，所以它永远不会进入对话上下文。
+      // 否则 `/clear` 会作为一条 user 消息留在刚被它清空的历史里，
+      // `/history` 会让模型看到「用户查了历史」。
+      const parsed = parseCommand(question);
+
+      if (parsed.kind === 'unknown') {
+        // 未知命令不发请求，走 stderr（它是错误，不是用户要的输出）
+        renderUnknownCommand(parsed.input, { errorOutput: options.errorOutput });
+        continue;
+      }
+
+      if (parsed.kind === 'known') {
+        const result = executeCommand(parsed.name, parsed.argument, session);
+        // 命令结果走 stdout：用户主动索要的输出
+        renderCommandResult(result, { output: options.output });
+        continue;
+      }
 
       session.append('user', question);
 
@@ -120,6 +135,12 @@ export async function runRepl(
         // 最小错误处理：打印错误后继续循环。
         // 不崩溃，也不污染上下文——失败的轮次不留 assistant 消息。
         // 走 stderr：stdout 只留给模型回答，重定向时不被诊断信息污染。
+        //
+        // 先收尾再报错（D-18）：finish() 补的那一个换行属于 stdout，
+        // 若等到 finally 才补，真实终端上一行的报错会粘在半截回答后面。
+        // 这里提前调一次，finally 里那次靠 finish() 的幂等守卫变成空操作；
+        // 两个流各自的字节内容不变（wrotePrefix 为真才补换行）。
+        renderer.finish();
         writeError(`[error] ${(error as Error).message}`);
       } finally {
         // 无论正常还是异常结束都收尾：保证正文后有且只有一个换行，

@@ -234,7 +234,71 @@ test('流中途失败：不追加 assistant，且补上收尾换行', async () =
   ]);
 });
 
-test('每轮都把当前模型作为请求参数传下去', async () => {
+test('/clear 之后下一轮的 messages 只剩 system 与当前提问', async () => {
+  const sent: Array<{ role: string; content: string }[]> = [];
+  const { chunks, stream, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream(messages) {
+      sent.push(messages);
+      yield { type: 'text-delta', text: 'ok' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['第一问', '/clear', '第二问']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+  });
+
+  assert.equal(sent.length, 2);
+  // 第二问发出时历史已被清空 —— /clear 生效了
+  assert.deepEqual(sent[1], [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: '第二问' },
+  ]);
+  assert.ok(chunks.join('').includes('已清空'));
+});
+
+test('命令本身不进入上下文', async () => {
+  const sent: Array<{ role: string; content: string }[]> = [];
+  const { stream, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream(messages) {
+      sent.push(messages);
+      yield { type: 'text-delta', text: 'ok' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['/history', '问题']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+  });
+
+  // /history 只触发一次请求（就是「问题」那次），且历史里没有 /history
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0], [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: '问题' },
+  ]);
+});
+
+// 这条用例由两处合并而来（见 Task 4 Step 4c）：旧的「每轮都把当前模型作为请求参数传下去」
+// 只喂一行输入、只钉住第一轮，被这里的第二轮完全覆盖，故只留这一条 ——
+// 它同时钉住「首次请求用初始模型」与「/model 切换后立即生效」。
+test('/model 切换后下一轮请求带上新模型', async () => {
   const models: Array<string | undefined> = [];
   const { stream, errStream } = captureOutput();
   const client: LLMClient = {
@@ -249,12 +313,39 @@ test('每轮都把当前模型作为请求参数传下去', async () => {
   };
 
   await runRepl(client, {
-    input: inputFrom(['hi']),
+    input: inputFrom(['第一问', '/model deepseek-v4-pro', '第二问']),
     output: stream,
     errorOutput: errStream,
     prompt: 'You: ',
     model: 'deepseek-flash',
   });
 
-  assert.deepEqual(models, ['deepseek-flash']);
+  assert.deepEqual(models, ['deepseek-flash', 'deepseek-v4-pro']);
+});
+
+test('未知命令走 stderr，且不触发请求', async () => {
+  let calls = 0;
+  const { chunks, stream, errChunks, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream() {
+      calls += 1;
+      yield { type: 'text-delta', text: 'ok' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['/foo']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+  });
+
+  assert.equal(calls, 0);
+  assert.ok(errChunks.join('').includes('未知命令'));
+  assert.ok(!chunks.join('').includes('未知命令'));
 });

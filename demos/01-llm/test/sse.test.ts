@@ -32,8 +32,13 @@ test('\\r\\n 换行等价处理，且 \\r\\n 被切在两次 chunk 之间也能�
 
   // \r 与 \n 分属两个 chunk —— 这是最容易写错的边界
   const first = parseSse('data: a\r');
-  // 尾部落单的 \r 必须**留在 rest 里**：若这里就被剥掉，下一块开头的 \n
-  // 会被当成一个空行，CRLF 跨块的那条事件再也拼不回来
+  // 尾部落单的 \r 必须**留在 rest 里**：在这个实现里落单的 \r 就是普通字符
+  // （只有 \r\n 才构成换行），提前剥掉会让它从事件内容里静默消失 ——
+  // 源字节 `data: a\rb\n\n` 切在 \r 与 b 之间时，data 会变成 "ab" 而不是 "a\rb"。
+  //
+  // 早先这里给的理由是「剥掉后下一块开头的 \n 会被当成空行，事件再也拼不回来」，
+  // 实测不成立：parseSse('\n\r\n', 'data: a') 一样得到 [{data:'a'}]，
+  // 因为下一块开头的 \n 本身就是一个合法的行终止符。做法对，理由是错的。
   assert.equal(first.rest, 'data: a\r');
   const second = parseSse('\n\r\n', first.rest);
   assert.deepEqual(second.events, [{ event: 'message', data: 'a' }]);
