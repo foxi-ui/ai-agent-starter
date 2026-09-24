@@ -20,7 +20,7 @@ readline 读到一行
   │         body: { model, messages }
   │       → 取 choices[0].message.content
   │
-  ├─ 成功：session.append('assistant', content) → 打印 content 到 stdout
+  ├─ 成功：session.append('assistant', content) → 打印 `AI: ` + content 到 stdout
   └─ 失败：打印 [error] ... 到 stderr → 不 append（上下文保持干净）
   │
   └─ 回到读下一行，直到输入流关闭
@@ -126,6 +126,27 @@ DeepSeek 的响应中，`message` 可能同时包含两个字段：
 本项目**只读取并打印 `content`**，`reasoning_content` 存在但被忽略。
 adapter 显式只解构 `content` 字段，因此思考过程不会进入 `Session`，
 也不会占用后续请求的上下文。
+
+## 一轮对话在终端上的形状
+
+需求（`docs/00-index.md`、spec §2、`README.md` 三处画的是同一份）：
+
+```text
+You: 什么是 React Server Components？
+AI: ...
+You: 总结刚才内容
+AI: ...
+```
+
+三条规则，缺一条形状就不对：
+
+1. **`You: ` 在每次读取之前写**，不是只在循环开始前写一次 —— 否则第二轮起用户是"盲打"
+2. **提示符不补换行** —— 它要和用户输入同行（终端负责回显输入）
+3. **`AI: ` 与正文一起写，且只在成功路径上写** —— 失败时 stdout 不会留下一个空的 `AI: `
+
+**已知边界**：提示符写在读取之前，而 EOF 只有在读的时候才知道，所以**最后一次提示符
+必然已经写出去**。文档没有规定退出时的行为，这里选择接受它（`pnpm start < q.txt` 的
+输出会以 `You: ` 结尾）。见 `DECISIONS.md` D15。
 
 ## 错误处理策略
 
