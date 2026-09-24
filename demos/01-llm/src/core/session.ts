@@ -1,19 +1,32 @@
 // 会话状态：按顺序累积对话消息。
 //
 // 只负责「记住说过什么」，不碰网络、也不负责打印。
-// 正因为没有副作用，这一层才能在无网络下被单独测试。
+//
+// 默认仍然是**无副作用**的纯类：不传 onChange 时，它的行为与 M1 完全一致。
+// 需要落盘时由调用方注入一个回调，三个变更点改完状态就广播一次 ——
+// 广播比「调用方记得在每处补写」可靠，因为 `/clear` 与 `/model <name>`
+// 是 executeCommand **内部**改的状态，调用方看不见它们。
 
 import type { Message, Role } from '@/core/types.ts';
+import type { SessionChange } from '@/core/journal.ts';
+
+/** 构造 Session 时的可选项 */
+export interface SessionOptions {
+  /** 回放得到的历史消息。不传即空会话 */
+  history?: Message[];
+  /** 变更广播。不传则完全退回「无副作用」的纯行为 */
+  onChange?: (change: SessionChange) => void;
+}
 
 /**
  * 一段对话的消息记录。
  *
- * 注意：上下文只存在于进程内存中，程序退出即清空。
- * 持久化到磁盘属于后续增量。
+ * 类本身只持有内存状态；「退出即清空」由注入的 onChange 打破 ——
+ * 传了它，每次变更就会落到磁盘（见 cli/repl.ts），不传则与 M1 完全一致。
  */
 export class Session {
   /** 已累积的消息，按时间顺序排列 */
-  private messages: Message[] = [];
+  private messages: Message[];
 
   /**
    * 本会话当前使用的模型。
@@ -23,15 +36,28 @@ export class Session {
    */
   private currentModel: string;
 
+  /** 变更广播回调；不传就是 undefined，此时这个类与 M1 的行为完全一致 */
+  private onChange?: (change: SessionChange) => void;
+
   /**
    * @param model 初始模型，通常来自 `resolveConfig` 的 `config.model`
+   * @param options 初始历史与变更广播，都可选
    */
-  constructor(model: string) {
+  constructor(model: string, options: SessionOptions = {}) {
     // 刻意不用 `constructor(private currentModel: string)` 这种参数属性写法：
     // 本项目靠 Node 的原生类型擦除直接跑 .ts，而擦除模式（strip-only）
     // 不支持 TS 独有的参数属性语法，会在运行时报 ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX。
     // 注意 tsc --noEmit 不会拦下它 —— 类型检查能过、运行才炸，所以只能靠这条注释守着。
     this.currentModel = model;
+
+    // 回放结果直接铺成初始状态，**不经过 append**。
+    // 这是必须的：构造时若也广播，每恢复一条历史就多写一行日志 ——
+    // 打开一次会话，文件就翻一倍。
+    //
+    // 复制一份而不是直接引用调用方的数组，免得外部还拿着它改。
+    this.messages = options.history ? [...options.history] : [];
+
+    this.onChange = options.onChange;
   }
 
   /**
@@ -42,6 +68,10 @@ export class Session {
    */
   append(role: Role, content: string): void {
     this.messages.push({ role, content });
+    // **先改内存、再广播**是刻意的顺序：广播的实现（写文件）抛错时，
+    // 内存状态已经改好了，不会留下「推了一半」的中间态。
+    // 磁盘落后于内存 + 一次警告，是选定的降级方向（见 cli/repl.ts）。
+    this.onChange?.({ type: 'message', role, content });
   }
 
   /**
@@ -78,6 +108,7 @@ export class Session {
   /** 切换当前模型；只影响后续请求，不改动已有消息 */
   set model(name: string) {
     this.currentModel = name;
+    this.onChange?.({ type: 'model', model: name });
   }
 
   /**
@@ -89,6 +120,7 @@ export class Session {
   clear(): number {
     const removed = this.messages.length;
     this.messages = [];
+    this.onChange?.({ type: 'clear' });
     return removed;
   }
 
