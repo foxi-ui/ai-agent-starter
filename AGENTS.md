@@ -28,6 +28,10 @@ demos/<阶段>/          各阶段项目
 新阶段项目**继承**这些约束，不要重新发明。当前唯一有代码的阶段是 `demos/01-llm/`，它的 `README.md` 与 `ARCHITECTURE.md` 是这些约束的详细出处。
 
 - **Node ≥ 22**，依赖原生类型擦除直接运行 `.ts`，**不引入构建步骤**
+- **不用需要「代码变换」的 TS 特性**（参数属性 / `enum` / `namespace` / 实验性装饰器）——
+  原生类型擦除只做擦除不做变换。`tsc --noEmit` 对它们**放行**，只有运行时才炸
+  （见 `demos/01-llm/docs/troubleshooting.md` T11）。
+  判断标准：删掉所有类型标注后仍是合法 JS 的，才能用。
 - **ESM**（`package.json` 的 `"type": "module"`）；包管理器 **pnpm**
 - **零运行时依赖**；devDependency 仅 `typescript` + `@types/node`
 - **分层单向依赖** `cli → core → llm`；`llm` / `core` 不 import `node:readline`、不写 `process.stdout` / `process.stderr`
