@@ -98,3 +98,53 @@ test('/model 不校验名字（有意为之）', () => {
     model: '随便写的名字',
   });
 });
+
+test('/model 只有尾随空白视为空参数（trim 后等价于查询）', () => {
+  // tab 补全常常回填成 `/model `（带一个尾随空格），用户可见的后果是：
+  // 它走的是**查询**而不是切换。这里把这条边界钉成有意行为，不是漏判。
+  assert.deepEqual(parseCommand('/model '), { kind: 'known', name: 'model', argument: '' });
+  assert.deepEqual(parseCommand('/model\t'), { kind: 'known', name: 'model', argument: '' });
+
+  const s = new Session('deepseek-flash');
+  assert.deepEqual(executeCommand('model', '', s), {
+    kind: 'model-current',
+    model: 'deepseek-flash',
+  });
+  assert.equal(s.model, 'deepseek-flash');
+});
+
+test('executeCommand /model 查询分支一次都不写 session.model', () => {
+  const s = new Session('deepseek-flash');
+
+  // 用 setter 探针替换实例上的 model 访问器。
+  //
+  // 为什么非要探针：契约是「查询分支**不得写**」，这是对**副作用**的约束，
+  // 而断言返回值只能观察到「值」有没有变。写回同值（比如把赋值上移到分支之前、
+  // 参数恰好等于当前模型名）在值上完全不可观测，只有「写入次数」会暴露它。
+  //
+  // 探针是**透明**的：读写都转发给原型上的原访问器，
+  // 所以它既是写入计数器，又不改变 Session 的真实行为。
+  const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(s), 'model');
+  const originalGet = descriptor?.get;
+  const originalSet = descriptor?.set;
+  assert.ok(
+    originalGet && originalSet,
+    'Session 的 model 应该是原型上的 get/set 访问器，否则这个探针的假设不成立',
+  );
+
+  let writes = 0;
+  Object.defineProperty(s, 'model', {
+    get: () => originalGet.call(s),
+    set: (value: string) => {
+      writes += 1;
+      originalSet.call(s, value);
+    },
+  });
+
+  assert.deepEqual(executeCommand('model', '', s), {
+    kind: 'model-current',
+    model: 'deepseek-flash',
+  });
+  assert.equal(writes, 0, '查询分支不得写 session.model');
+  assert.equal(s.model, 'deepseek-flash');
+});

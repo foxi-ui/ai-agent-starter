@@ -83,6 +83,15 @@ export function executeCommand(
 
     case 'model':
       // 无参数 = 查询；有参数 = 切换
+      //
+      // 这里是**纯查询**，不得写 session.model —— 查询是只读操作，
+      // 用户的 `/model`（含只有尾随空白的 `/model `，那是 trim 后的空参数）
+      // 不该产生任何副作用。
+      //
+      // 下面那条赋值刻意留在 if **之后**，别顺手上移：
+      // 上移后查询分支就会写模型 —— 写空串时返回值也会跟着变（用例会红），
+      // 但若是写回「与当前同名」的值，返回值一模一样、所有值断言都看不出差别。
+      // `test/commands.test.ts` 的 setter 探针用例（写入计数必须为 0）就是为了钉住后者。
       if (argument === '') {
         return { kind: 'model-current', model: session.model };
       }
