@@ -486,7 +486,11 @@ test('renderUnknownCommand 写 stderr，可用列表来自 COMMAND_NAMES', () =>
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `node --import ./loader.mjs --test test/render.test.ts`
-Expected: FAIL —— `renderCommandResult is not a function`
+Expected: FAIL —— **`SyntaxError: The requested module '@/cli/render.ts' does not provide an export named 'renderCommandResult'`**
+
+> 这是**第三种**形状（实测确认）：`render.ts` **存在**，只是还没有那个导出 ——
+> ESM 在**模块链接期**就拒绝，代码一行都没跑。它与「模块不存在」（`ENOENT` / `Cannot find package`）是两回事。
+> 凡是「给**既有模块加函数**」的 TDD，RED 都是这个形状。详见 `docs/troubleshooting.md` T10。
 
 - [ ] **Step 3: 实现**
 
@@ -932,7 +936,20 @@ stdout 已经写出了 `AI: ` 与半截正文 —— 同文件另一处（「边
   断开连接」——**与实现不符**：`src/` 全仓无 `AbortController`（唯一的 `aborted` 是 `core/types.ts` 里的一个
   `FinishReason` 字符串），`readWithIdleTimeout` 只是 reject，连接由 `reader.cancel()` 收掉。
 
-**①②③ 都不改变任何行为**，改完 `pnpm test` 应仍为 61/61（用例数不变）。
+**④ 给 `docs/troubleshooting.md` 的 T10 补第三种报错形状**
+
+T10 现在只并列了两种「找不到模块」的形状（没带 loader → `Cannot find package`；带了 loader → `ENOENT` + 绝对路径）。
+M2b 实施中又实测到**第三种**，且它是最常遇到的一种 —— **给既有模块加函数**时的 TDD RED：
+
+```console
+Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.ts'
+  does not provide an export named 'renderCommandResult'
+```
+
+前两种是「模块不存在」，这一种是「**模块存在、但没导出那个名字**」—— ESM 在**模块链接期**拒绝，
+代码一行都没跑。请把它作为 T10 的第三种形状补进去，并点明它对应「给既有模块加函数」这个常见场景。
+
+**①②③④ 都不改变任何行为**，改完 `pnpm test` 用例数不变（以执行时的实际值为准）。
 - [ ] **Step 1: 在 `HOW-IT-WORKS.md` 的数据流图后加一节**
 
 在「流式：屏幕上看到的 ≠ 模型记得的」之后插入：
