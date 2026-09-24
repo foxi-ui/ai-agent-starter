@@ -12,7 +12,7 @@
 `ai-chat` 走通了「LLM API → 消息结构 → 上下文管理」这条链路的起点（非流式多轮对话）。
 本阶段（`ai-chat-agent`）在其之上叠加**工具调用**，亲手实现一个最简单的 Agent。
 
-对应 `docs/00-guides.md` 阶段 1「真正理解 Agent」的天气例子：
+对应 `docs/ROADMAP.md` 的阶段 1「第一个 Agent」（学习内容：Tool Calling / Agent Loop / State）。以天气为例：
 
 ```text
 用户：北京今天天气怎么样？
@@ -107,8 +107,8 @@ demos/02-agent/
       client.ts         # 扩展：chat(messages, options?) → ChatResult
       deepseek.ts       # 扩展：发送 tools、解析 tool_calls / finish_reason
   test/                 # 与被测模块一一对应
-  docs/  00-index.md  01-full-design.md
-  README.md  ARCHITECTURE.md  DECISIONS.md  HOW-IT-WORKS.md
+  docs/  troubleshooting.md
+  README.md  ARCHITECTURE.md  DECISIONS.md  EVALUATION.md
 ```
 
 ---
@@ -322,7 +322,7 @@ API 中途失败则本轮只留下 user 消息、不残留半截工具痕迹（�
 ## 14. 需在实施时核实的一点
 
 DeepSeek 工具调用遵循 OpenAI 兼容格式（`tools` 数组 + `message.tool_calls` + `finish_reason:"tool_calls"`，
-`arguments` 为 JSON 字符串）。`demos/01-llm/docs/01-full-design.md` §12 已确认 `tool` 角色与 `tool_calls`
+`arguments` 为 JSON 字符串）。`demos/01-llm/docs/deepseek-api-facts.md` 已确认 `tool` 角色与 `tool_calls`
 finish_reason 存在；实施时对照 DeepSeek 官方文档再核一遍确切字段名。
 
 ---
