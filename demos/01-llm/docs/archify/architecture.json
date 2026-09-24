@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ai-chat 架构（01-llm 已实现部分）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "01-llm-architecture.html",
+    "viewBox": [1110, 520],
+    "views": [
+      {
+        "id": "startup",
+        "label": "启动与装配",
+        "focus": ["config", "entry", "repl"],
+        "note": "配置解析与依赖注入只在进入循环前发生一次。"
+      },
+      {
+        "id": "request",
+        "label": "一轮请求的主路径",
+        "focus": ["terminal", "repl", "client", "deepseek", "api"],
+        "note": "system 提示 + 目前为止的全部历史，每轮都重新发过去。"
+      },
+      {
+        "id": "stream",
+        "label": "流式事件的去向",
+        "focus": ["deepseek", "sse", "repl", "render", "terminal"],
+        "note": "SSE 分帧 → 事件归一化 → 终端呈现；正文由 repl 累积。"
+      }
+    ]
+  },
+  "components": [
+    { "id": "config", "type": "backend", "label": "cli/config.ts", "sublabel": "读 process.env", "pos": [40, 60], "size": [120, 58] },
+    { "id": "entry", "type": "backend", "label": "src/index.ts", "sublabel": "装配依赖 · 启动", "pos": [260, 60], "size": [130, 58] },
+
+    { "id": "terminal", "type": "external", "label": "终端 / 管道", "sublabel": "stdin · stdout · stderr", "pos": [40, 250], "size": [120, 58] },
+    { "id": "repl", "type": "backend", "label": "cli/repl.ts", "sublabel": "readline 主循环", "pos": [260, 250], "size": [130, 58] },
+    { "id": "client", "type": "backend", "label": "llm/client.ts", "sublabel": "LLMClient 接口", "tag": "测试接缝", "pos": [480, 250], "size": [130, 58] },
+    { "id": "deepseek", "type": "backend", "label": "llm/deepseek.ts", "sublabel": "请求构造 · 响应解析", "pos": [700, 250], "size": [130, 58] },
+    { "id": "api", "type": "cloud", "label": "DeepSeek API", "sublabel": "/chat/completions", "brand": "deepseek", "pos": [920, 250], "size": [130, 58] },
+
+    { "id": "render", "type": "backend", "label": "cli/render.ts", "sublabel": "StreamEvent → 终端", "pos": [40, 430], "size": [120, 58] },
+    { "id": "session", "type": "backend", "label": "core/session.ts", "sublabel": "会话消息累积", "pos": [260, 430], "size": [130, 58] },
+    { "id": "types", "type": "backend", "label": "core/types.ts", "sublabel": "类型契约", "pos": [480, 430], "size": [130, 58] },
+    { "id": "sse", "type": "backend", "label": "llm/sse.ts", "sublabel": "SSE 分帧", "tag": "纯函数", "pos": [700, 430], "size": [130, 58] }
+  ],
+  "connections": [
+    { "id": "config-to-entry", "from": "config", "to": "entry", "label": "Config" },
+    { "id": "entry-to-repl", "from": "entry", "to": "repl", "label": "注入 client 与 IO", "labelDy": 24 },
+    { "id": "terminal-to-repl", "from": "terminal", "to": "repl", "label": "用户输入" },
+    { "id": "repl-to-client", "from": "repl", "to": "client", "label": "chatStream()" },
+    { "id": "client-to-deepseek", "from": "client", "to": "deepseek", "label": "实现", "variant": "dashed" },
+    { "id": "deepseek-to-api", "from": "deepseek", "to": "api", "label": "HTTPS POST" },
+    { "id": "repl-to-session", "from": "repl", "to": "session", "label": "append · toMessages()", "labelDy": 24 },
+    { "id": "repl-to-render", "from": "repl", "to": "render", "label": "onEvent(StreamEvent)" },
+    { "id": "render-to-terminal", "from": "render", "to": "terminal", "label": "stdout / stderr" },
+    { "id": "deepseek-to-sse", "from": "deepseek", "to": "sse", "label": "parseSse(text, buffer)", "labelDy": 24 },
+    { "id": "types-to-client", "from": "types", "to": "client", "label": "import type", "variant": "dashed" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "分层与依赖方向",
+      "items": [
+        "cli → core、cli → llm，依赖严格单向",
+        "core 与 llm 之间只有 import type",
+        "llm / core 不碰 node:readline 与 stdout"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "一轮对话的数据流",
+      "items": [
+        "repl 每轮重发 system 提示 + 全部历史",
+        "当前模型随请求传，client 保持无状态",
+        "SSE chunk 归一化成三态 StreamEvent"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "可测试性与边界",
+      "items": [
+        "LLMClient 是唯一接缝，测试用替身，不碰网络",
+        "Node ≥ 22 原生类型擦除直跑 .ts，零运行时依赖",
+        "密钥只经环境变量，上下文只在进程内存"
+      ]
+    }
+  ]
+}

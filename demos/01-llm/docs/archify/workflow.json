@@ -1,0 +1,293 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "ai-chat 一轮对话的流程（01-llm 已实现部分）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "01-llm-workflow.html",
+    "views": [
+      {
+        "id": "main-round",
+        "label": "一轮的主路径",
+        "focus": [
+          "user_line",
+          "read",
+          "session",
+          "request",
+          "api",
+          "normalize",
+          "consume",
+          "terminal_out"
+        ],
+        "note": "从读到一行，到答案逐字出现在终端上。"
+      },
+      {
+        "id": "context-writeback",
+        "label": "上下文写回",
+        "focus": [
+          "consume",
+          "commit",
+          "session"
+        ],
+        "note": "只有完整回答才会写回 Session。"
+      },
+      {
+        "id": "layering",
+        "label": "每一跳落在哪一层",
+        "focus": [
+          "read",
+          "request",
+          "normalize",
+          "consume"
+        ],
+        "note": "cli 只认 StreamEvent，SSE 只活在 llm 层。"
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "ext",
+      "label": "外部 — 用户 · DeepSeek API"
+    },
+    {
+      "id": "cli",
+      "label": "cli 层 — 交互与呈现"
+    },
+    {
+      "id": "core",
+      "label": "core 层 — 会话状态"
+    },
+    {
+      "id": "llm",
+      "label": "llm 层 — 模型适配"
+    }
+  ],
+  "phases": [
+    {
+      "id": "boot",
+      "label": "启动",
+      "fromCol": 0,
+      "toCol": 0
+    },
+    {
+      "id": "round",
+      "label": "一轮对话",
+      "fromCol": 1,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "streaming",
+      "label": "流式返回",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "user_line",
+    "read",
+    "session",
+    "request",
+    "api",
+    "normalize",
+    "consume",
+    "terminal_out"
+  ],
+  "nodes": [
+    {
+      "id": "user_line",
+      "lane": "ext",
+      "col": 1,
+      "type": "external",
+      "label": "用户敲入一行",
+      "width": 160
+    },
+    {
+      "id": "terminal_out",
+      "lane": "ext",
+      "col": 5,
+      "type": "external",
+      "label": "终端输出",
+      "sublabel": "回答 stdout · 诊断 stderr",
+      "width": 160
+    },
+    {
+      "id": "boot",
+      "lane": "cli",
+      "col": 0,
+      "type": "backend",
+      "label": "启动装配",
+      "sublabel": "resolveConfig → runRepl",
+      "tag": "缺 key 退出码 1",
+      "width": 160
+    },
+    {
+      "id": "read",
+      "lane": "cli",
+      "col": 1,
+      "type": "backend",
+      "label": "写提示符 · 读一行",
+      "sublabel": "空行不进入上下文",
+      "width": 160
+    },
+    {
+      "id": "consume",
+      "lane": "cli",
+      "col": 5,
+      "type": "backend",
+      "label": "消费流式事件",
+      "sublabel": "onEvent(e) · 累积 text",
+      "width": 160
+    },
+    {
+      "id": "session",
+      "lane": "core",
+      "col": 2,
+      "type": "database",
+      "label": "Session",
+      "sublabel": "消息数组（仅内存）",
+      "width": 160
+    },
+    {
+      "id": "commit",
+      "lane": "core",
+      "col": 5,
+      "type": "backend",
+      "label": "写回上下文",
+      "sublabel": "append('assistant', text)",
+      "width": 160
+    },
+    {
+      "id": "request",
+      "lane": "llm",
+      "col": 3,
+      "type": "backend",
+      "label": "chatStream(messages)",
+      "sublabel": "fetch POST + Bearer",
+      "width": 160
+    },
+    {
+      "id": "api",
+      "lane": "llm",
+      "col": 4,
+      "type": "cloud",
+      "label": "DeepSeek API",
+      "sublabel": "/chat/completions",
+      "brand": "deepseek",
+      "tag": "HTTPS",
+      "width": 160
+    },
+    {
+      "id": "normalize",
+      "lane": "llm",
+      "col": 5,
+      "type": "backend",
+      "label": "SSE 分帧 + 归一化",
+      "sublabel": "parseSse → StreamEvent",
+      "tag": "30s 空闲超时",
+      "width": 160
+    }
+  ],
+  "edges": [
+    {
+      "id": "boot-read",
+      "from": "boot",
+      "to": "read",
+      "label": "runRepl(client, io)"
+    },
+    {
+      "id": "user-read",
+      "from": "user_line",
+      "to": "read"
+    },
+    {
+      "id": "read-session",
+      "from": "read",
+      "to": "session",
+      "label": "append('user', q)"
+    },
+    {
+      "id": "session-request",
+      "from": "session",
+      "to": "request",
+      "label": "toMessages(SYSTEM_PROMPT)"
+    },
+    {
+      "id": "request-api",
+      "from": "request",
+      "to": "api"
+    },
+    {
+      "id": "api-normalize",
+      "from": "api",
+      "to": "normalize",
+      "label": "SSE chunk",
+      "role": "async"
+    },
+    {
+      "id": "normalize-consume",
+      "from": "normalize",
+      "to": "consume",
+      "label": "StreamEvent"
+    },
+    {
+      "id": "consume-output",
+      "from": "consume",
+      "to": "terminal_out",
+      "label": "text-delta"
+    },
+    {
+      "id": "consume-commit",
+      "from": "consume",
+      "to": "commit",
+      "label": "完整回答"
+    },
+    {
+      "id": "commit-session",
+      "from": "commit",
+      "to": "session",
+      "label": "写回 assistant 消息"
+    }
+  ],
+  "groups": [
+    {
+      "id": "repl_loop",
+      "label": "每轮重复：读一行 → 拿到回答 → 写回上下文",
+      "lane": "cli",
+      "fromCol": 1,
+      "toCol": 5,
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "一轮到底发生了什么",
+      "items": [
+        "每轮都把 system 提示 + 全部历史重新发过去",
+        "SSE 逐条到达，拼成事件后再逐字写出去",
+        "正文由 repl 累积，渲染器只呈现不累积"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "上下文只在成功时写回",
+      "items": [
+        "只有拿到完整回答才 append('assistant', text)",
+        "流中途失败留下的半截回答不进上下文",
+        "空行被跳过，不污染对话历史"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "错误与两条输出流",
+      "items": [
+        "非 2xx 与读超时都抛错，打印到 stderr 后继续循环",
+        "stdout 只有模型回答，重定向即得干净文本",
+        "stderr 承载 [思考中…]、截断警告与错误"
+      ]
+    }
+  ]
+}
