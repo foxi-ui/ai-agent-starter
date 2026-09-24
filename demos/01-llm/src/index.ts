@@ -23,7 +23,7 @@ try {
 // runRepl 只认 LLMClient 接口，所以这里换成任何实现都能跑。
 runRepl(createDeepSeekClient(config), {
   input: process.stdin,
-  // 模型回答 → stdout
+  // 模型回答与命令结果 → stdout
   output: process.stdout,
   // 错误与诊断 → stderr，两条流互不污染
   errorOutput: process.stderr,

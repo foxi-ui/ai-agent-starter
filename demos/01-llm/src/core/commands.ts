@@ -70,7 +70,8 @@ export function parseCommand(line: string): ParsedCommand {
  * 却忘了在这里处理时，函数会有路径走到末尾却不返回，编译器报 TS2366。
  *
  * 它与 `cli/render.ts` 的 `renderCommandResult` 里那个显式 `never` 守卫
- * **作用等价、写法必须不同**：那边函数返回 void，漏一个变体时编译器不会出声，
+ * **同为编译期的穷尽性守卫，但作用于不同的联合类型、写法也必须不同**：
+ * 那边函数返回 void，漏一个变体时编译器不会出声，
  * 所以才必须显式写出来。两者守的轴也不同 —— 这边守 `CommandName`（新增命令忘了实现），
  * 那边守 `CommandResult`（新增结果类型忘了渲染）。
  *

@@ -5,8 +5,8 @@
 // 才能写进 Session）。各管一件事。
 //
 // 输出分流（见 DECISIONS D13 / D-M2-10）：
-//   stdout —— 用户主动要看的：模型回答
-//   stderr —— 用户没主动要的：思考指示、截断警告、错误
+//   stdout —— 用户主动要看的：模型回答 + 命令结果
+//   stderr —— 用户没主动要的：思考指示、截断警告、错误、未知命令提示
 
 import type { StreamEvent } from '@/core/types.ts';
 import { COMMAND_NAMES, type CommandResult } from '@/core/commands.ts';
