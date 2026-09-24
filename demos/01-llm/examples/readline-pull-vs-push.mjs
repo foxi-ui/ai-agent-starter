@@ -6,7 +6,7 @@
 // 结论：本项目必须用 A。用 B 的话，`session.append('assistant', ...)`
 // 会按「回答到达的先后」写入数组，把对话历史顺序打乱。
 //
-// 相关文档：docs/how-conversation-works.html（「关联知识」一节）
+// 相关文档：ARCHITECTURE.md 的「运行时数据流 · 步骤 1：读取一行」
 //
 // 运行：node examples/readline-pull-vs-push.mjs
 import { createInterface } from 'node:readline';

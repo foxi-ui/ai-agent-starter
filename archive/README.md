@@ -17,3 +17,7 @@
 | `01-llm/01-full-design.md` | 01-llm 完整蓝图 | 目录树列了 8 个不存在的 src 文件；§12 已提为 `docs/deepseek-api-facts.md` |
 | `01-llm/HOW-IT-WORKS.md` | 运行时行为说明 | 约 60–65% 内容在别处已有副本；唯一部分已并入 `ARCHITECTURE.md` |
 | `01-llm/plans/` | 4 份实施计划（4803 行） | 任务已完成的执行过程产物 |
+| `01-llm/llm-architecture-diagram/` | 架构图与数据流图（HTML + 视觉校验截图/JSON），约 3.3 MB | 与 `ARCHITECTURE.md` 同一内容的可视化形态；截图是验证快照，不是文档 |
+| `01-llm/how-conversation-works.html` | 一轮对话可视化 | 内容已并入 `ARCHITECTURE.md` 的「运行时数据流」 |
+| `01-llm/how-sse-works.html` | SSE 解码可视化 | 内容已在 `ARCHITECTURE.md` 步骤 4 与 spec m2 §7 |
+| `01-llm/archify/` | 上述两张图的 archify 源数据（JSON） | 图表已归档，源数据随之归档 |
