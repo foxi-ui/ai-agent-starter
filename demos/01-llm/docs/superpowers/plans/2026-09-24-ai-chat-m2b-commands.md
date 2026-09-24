@@ -872,7 +872,7 @@ Expected:
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/cli/repl.ts test/repl.test.ts
+git add src/cli/repl.ts test/repl.test.ts test/sse.test.ts
 git commit -m "feat: handle slash commands in the REPL"
 ```
 
