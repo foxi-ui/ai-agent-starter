@@ -176,7 +176,10 @@ type StreamEvent =
 
 全部来自 DeepSeek 官方文档，是 `deepseek.ts` + `sse.ts` 的验收清单：
 
-1. **`stream: true` 必须同时带 `stream_options`**，否则返回 400。
+1. ~~**`stream: true` 必须同时带 `stream_options`**，否则返回 400。~~
+   **（2026-09-24 更正：原文写反了。）** 依赖方向是反的：**`stream_options` 必须先有 `stream: true`**，
+   单独传 `stream_options` 才返回 400。官方文档**没有**任何地方要求流式必须带 `stream_options`。
+   因此只传 `stream: true` 是合法的，`stream_options` 只在要 `include_usage` 时才需要。
 2. **`usage` 只在最后一个 chunk 出现**，且官方明确**不产生单独的 usage-only chunk**；中断生成时拿不到 usage。
 3. **SSE 必须按字节流缓冲解析**：一次 `read()` 可能含多条事件，一条事件可能被 TCP 切成两次 `read()`。解析器维护残余缓冲、遇空行 dispatch、忽略 `:` 开头的注释行（keep-alive）。
 4. **thinking 默认开启**，`delta.reasoning_content` 与 `delta.content` 是两条独立通道交替到达；`reasoning_tokens` 计入 `completion_tokens`。
@@ -317,7 +320,7 @@ M7 文档补全 + 手动冒烟 + 全量验证
 - `thinking`：`{ type: 'enabled' | 'disabled' }`；`reasoning_effort`：`none/low/high/max`。
 - `max_tokens`：1–384K；默认非 thinking 8K / thinking 64K / `reasoning_effort=max` 时 128K。
 - `temperature`：≤2，默认 1，thinking 模式无效。
-- `stream_options.include_usage`：usage 只出现在最后一个 chunk，无单独 usage-only chunk。
+- `stream_options.include_usage`：**可选**，不是流式的必填项。为 `true` 时每个 chunk 都带 `usage` 字段，除最后一个外均为 `null`；不传它时 `usage` 只在最后一个 chunk 出现。两种情况下都**不产生单独的 usage-only chunk**，统计搭载在末个内容 chunk 上（该 chunk 的 `choices` 只有一个元素，不带新内容、只带非 null 的 `finish_reason`）。
 - `response_format`：`{ type: 'text' | 'json_object' }`。
 - `finish_reason`：`stop` / `length` / `content_filter` / `tool_calls` / `insufficient_system_resource` / `aborted`。
 - `usage`：`prompt_tokens`、`completion_tokens`、`total_tokens`、`prompt_tokens_details.{cached_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens}`、`completion_tokens_details.reasoning_tokens`。

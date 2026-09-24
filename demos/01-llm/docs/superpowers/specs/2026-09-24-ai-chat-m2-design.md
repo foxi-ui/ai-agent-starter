@@ -173,7 +173,7 @@ user 输入（非命令）
   │
   ├─ client.chatStream(session.toMessages(SYSTEM_PROMPT), { model: session.model })
   │     │
-  │     ├─ POST /chat/completions  body: { model, messages, stream: true, stream_options }
+  │     ├─ POST /chat/completions  body: { model, messages, stream: true }
   │     ├─ response.ok? 否 → 抛错（沿用 M1 的防御式错误体解析）
   │     ├─ for await (chunk of response.body)
   │     │     ├─ TextDecoder({stream:true}).decode(chunk, {stream:true})
@@ -418,12 +418,17 @@ export function renderUnknownCommand(
 {
   "model": "<本次模型>",
   "messages": [ ... ],
-  "stream": true,
-  "stream_options": { "include_usage": true }
+  "stream": true
 }
 ```
 
-**`stream: true` 必须同时带 `stream_options`，否则服务端返回 400**（蓝图 §6 第 1 条）。本次虽然不消费 `usage`，仍带 `include_usage: true`——既满足该约束，也让 M4 不必改请求构造。
+**只传这三个字段，不传 `stream_options`。**
+
+- 依赖方向：**`stream_options` 依赖 `stream: true`**（单独传它才 400），不是反过来。官方文档没有任何地方要求流式必须带 `stream_options`。
+- 不加 `include_usage` 时，`usage` **仍然只在最后一个 chunk** 出现，供 M4 消费——所以 M2 现在加它没有任何收益。
+- 这与项目既有约定一致：`deepseek.ts` 的注释写明「请求体只传本次用到的字段，`stream` / `temperature` 等都跟随服务端默认值，不额外发送」。
+
+> 蓝图 §6 第 1 条原文写反了（写成「流式必须带 `stream_options`」），已于 2026-09-24 对照官方文档更正。
 
 ### 响应归一化（`deepseek.ts` 负责，`sse.ts` 不管）
 
@@ -505,7 +510,7 @@ export function renderUnknownCommand(
 | `sse.test.ts`【新】 | §7 表格的 10 种情形；多字节字符跨块（在 `TextDecoder` 层验证） |
 | `commands.test.ts`【新】 | `parseCommand` 三态（none/known/unknown）；`/model` 有无参数；`/clear` 返回条数；`/history` 空会话 |
 | `render.test.ts`【新】 | 事件序列 → stdout/stderr 各自内容；`[思考中…]` 只出现一次；`finish()` 保证单个换行；异常路径也补换行；`length` 警告 |
-| `deepseek.test.ts`【改】 | `chatStream` 请求体含 `stream: true` + `stream_options`；假 SSE 响应体 → 断言事件序列；`finish_reason` → `done`；`[DONE]` 兜底；非 2xx；空闲超时；坏 JSON 事件被跳过 |
+| `deepseek.test.ts`【改】 | `chatStream` 请求体含 `model` + `messages` + `stream: true`，且**不含** `stream_options`；假 SSE 响应体 → 断言事件序列；`finish_reason` → `done`；`[DONE]` 兜底；非 2xx；空闲超时；坏 JSON 事件被跳过 |
 | `session.test.ts`【改】 | `new Session('m')`；`clear()` 返回条数且不影响 model；`history()` 返回副本（改返回值不影响内部） |
 | `repl.test.ts`【改】 | fake client 换成带 `chatStream` 的；正文逐字写 stdout、`[思考中…]` 只写 stderr；命令不进上下文（`/clear` 后下一轮 messages 只剩 system）；`/history` 走 stdout |
 | `config.test.ts`、`index.test.ts` | 不变 |
@@ -527,9 +532,17 @@ Build:     N/A（noEmit）
 
 ---
 
-## 14. 需在实施时核实的一点
+## 14. 官方文档核实结果（2026-09-24 已核）
 
-DeepSeek 流式响应的 chunk 形状（`choices[0].delta.content` / `delta.reasoning_content` / `finish_reason`）遵循 OpenAI 兼容格式。本 spec 依据 `docs/01-full-design.md` §12 的已核实事实撰写，**实施时对照官方文档再核一遍确切字段名**，特别是：
+原计划「实施时再核一遍」，实际在写计划前就核完了。结论如下，其中第 1 条**推翻了蓝图的一条记载**：
 
-- `stream_options` 的确切形状（`{ include_usage: true }`？）
-- 末 chunk 中 `usage` 与 `finish_reason` 的相对位置（本次不消费 usage，但要知道它是否与 `finish_reason` 同 chunk）
+| # | 核实项 | 结论 |
+| --- | --- | --- |
+| 1 | `stream: true` 是否必须带 `stream_options` | **不需要。** 蓝图 §6 第 1 条写反了——依赖方向是 `stream_options` 依赖 `stream: true`，单独传 `stream_options` 才 400。已更正该条与 §12 的价格表旁注。 |
+| 2 | `stream_options.include_usage` 的效果 | `true` 时每个 chunk 都带 `usage`（除末个外均为 `null`）；不传时 `usage` 只在末 chunk 出现。两种情况都不产生单独的 usage-only chunk。 |
+| 3 | 末 chunk 的形状 | `choices` **只有一个元素、不带新内容、带非 null 的 `finish_reason`**，`usage` 与它同 chunk，紧接其后是 `data: [DONE]`。 |
+| 4 | `finish_reason` 的位置 | 在 **choice 对象上**（与 `delta` 平级），不在 `delta` 里面。 |
+| 5 | `delta` 的字段 | `content`、`reasoning_content`（thinking 模式专有）、`role`（只在首个 chunk）、`tool_calls`。**没有 `finish_reason`**。 |
+| 6 | 流终止符 | `data: [DONE]`。每个 chunk 的 `id` 与时间戳相同，`object` 恒为 `chat.completion.chunk`。 |
+
+由此确定：M2 的请求体**只传 `{ model, messages, stream: true }`**，不发 `stream_options`（M2 不消费 usage，发了没有收益）。
