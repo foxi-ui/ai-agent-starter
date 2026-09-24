@@ -453,6 +453,10 @@ export function renderUnknownCommand(
 
 - 常量：`STREAM_IDLE_TIMEOUT_MS = 30_000`，定义在 `deepseek.ts`（本次不做成配置项）
 - 时机：每收到一个 chunk 重置计时器；**包括第一个 chunk 之前**（覆盖「首字节超时」）
+  - **限定（2026-09-24 补）**：计时器在拿到 `response.body` **之后**才建立，
+    `await fetch(...)` 之上没有本项目的时限 —— 服务端接受连接但不回响应头时会等到
+    undici 默认的 `headersTimeout`（约 300s）才失败，不是 30s。它覆盖的是
+    「**响应头之后的**首字节」；真正的首字节超时归 M6。见 `DECISIONS.md` D21
 - 超时动作：内部 `AbortController.abort()` 断开连接，抛 `new Error('流空闲超时（30s 无数据），已中断')`
 - 错误去向：`repl` 的 `catch` → stderr；**不追加 assistant 消息**
 
@@ -494,7 +498,7 @@ export function renderUnknownCommand(
 | 非 2xx | 沿用 M1：**开始读流之前**检查 `response.ok`，防御式解析错误体（`error.message` → 原始 body），抛 `DeepSeek API error {status}: {detail}` |
 | 空闲超时 | 抛错 → stderr；本轮不 append |
 | 流中途网络断开 | 同上。**已打印的半截答案留在屏幕上，但不进入上下文** |
-| 单条事件 JSON 解析失败 | 跳过该事件，累计计数；流结束时 stderr 警告一次。**不因一条坏 chunk 丢掉整个回答** |
+| 单条事件 JSON 解析失败 | 跳过该事件，累计计数；流结束时 stderr 警告一次。**不因一条坏 chunk 丢掉整个回答**<br>**注（2026-09-24 补）**：M2a 仅实现「跳过」；「累计计数 + 流结束时 stderr 警告一次」**未落地** —— 原因（D-M2-3 的事件联合已冻结为 3 成员、`llm/` 不许写 stderr）与落点（M6）见 `DECISIONS.md` D23。本表此行与 §12 的测试清单本来也互相矛盾 |
 | `finish_reason === 'length'` | 正常收尾，stderr 警告：`[警告] 回答被截断（finish_reason=length）` |
 | 流正常结束但未收到 `done` | 不报错；`finish()` 照常收尾换行 |
 | 未知的 `finish_reason` 取值 | 原样传出，不崩 |

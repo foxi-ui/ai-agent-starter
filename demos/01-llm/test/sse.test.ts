@@ -32,6 +32,9 @@ test('\\r\\n 换行等价处理，且 \\r\\n 被切在两次 chunk 之间也能�
 
   // \r 与 \n 分属两个 chunk —— 这是最容易写错的边界
   const first = parseSse('data: a\r');
+  // 尾部落单的 \r 必须**留在 rest 里**：若这里就被剥掉，下一块开头的 \n
+  // 会被当成一个空行，CRLF 跨块的那条事件再也拼不回来
+  assert.equal(first.rest, 'data: a\r');
   const second = parseSse('\n\r\n', first.rest);
   assert.deepEqual(second.events, [{ event: 'message', data: 'a' }]);
 });
@@ -75,5 +78,8 @@ test('[DONE] 只是一条普通事件，含义由调用方解释', () => {
 
 test('空输入与连续空行不崩', () => {
   assert.deepEqual(parseSse(''), { events: [], rest: '' });
-  assert.deepEqual(parseSse('\n\n\n\n').events, []);
+  const blank = parseSse('\n\n\n\n');
+  assert.deepEqual(blank.events, []);
+  // 全是空行时没有任何残留 —— 空块不产出事件，也不该攒下 rest
+  assert.equal(blank.rest, '');
 });

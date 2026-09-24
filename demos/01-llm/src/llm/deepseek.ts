@@ -109,8 +109,10 @@ export function createDeepSeekClient(
       // 逐层可选链 + 兜底空串：任何一层缺失都返回 ''，而不是抛错。
       // 否则一个空回答就能让整个 REPL 崩掉。
       //
-      // 另外：这里刻意不读 reasoning_content（模型的思考过程），
-      // 它既不打印、也不会进入后续上下文。
+      // 另外：这里刻意不读 reasoning_content（模型的思考过程）——这是**非流式路径**的取舍。
+      // 流式路径（chatStream）会把同一个字段归一化成 reasoning-delta，由渲染器在 stderr
+      // 写一行 `[思考中…]` 指示；两条路径都不打印思考正文、也都不把它放进后续上下文。
+      // 见 DECISIONS D22。
       const content = data.choices[0]?.message?.content ?? '';
       return { content };
     },

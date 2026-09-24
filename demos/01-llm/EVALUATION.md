@@ -100,6 +100,12 @@ M1 自身的交付目标 —— **非流式多轮对话 + 最小错误处理** �
   `test/deepseek.test.ts` 覆盖事件序列、末 chunk 的 `finish_reason`、`[DONE]` 兜底、
   非 2xx、空闲超时、坏 JSON 跳过、**多字节字符被切在两次 read 之间不乱码**
 - `src/cli/render.ts` 把事件渲染到 stdout/stderr；`test/render.test.ts` 覆盖分流规则
+- **真实网络**：2026-09-24 实跑一次流式请求
+  （`printf '用一句话说明什么是闭包\n' | pnpm --silent start 1>out.txt 2>err.txt`，`exit=0`）——
+  stdout 为 `You: AI: 闭包是函数与其定义时所处词法作用域的组合——…外部变量。`，
+  后接一个**无换行**的 `You: ` 提示符；stderr **恰好**一行 `[思考中…]`；
+  stdout 里不出现思考文字。这一次同时验证了分流（正文与提示符走 stdout、
+  思考指示走 stderr）、`AI: ` 前缀与 D15 的输出形状
 
 **五条硬约束的落实**（`01-full-design.md` §6）
 

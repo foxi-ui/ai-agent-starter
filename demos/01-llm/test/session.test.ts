@@ -24,6 +24,11 @@ test('toMessages 把 system 放在最前', () => {
 test('构造时带上当前模型，可读可改', () => {
   const s = new Session('deepseek-flash');
   assert.equal(s.model, 'deepseek-flash');
+  // 先攒一条消息再切模型：`set model` 注释声称「只影响后续请求，不改动已有消息」，
+  // 这里把它变成可证伪的断言 —— 模型是 per-call 参数，历史消息不该被它碰到
+  s.append('user', '什么是 React Server Components？');
+  const before = s.toMessages('你是 CLI AI 助手');
   s.model = 'deepseek-v4-pro';
   assert.equal(s.model, 'deepseek-v4-pro');
+  assert.deepEqual(s.toMessages('你是 CLI AI 助手'), before);
 });
