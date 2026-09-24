@@ -154,6 +154,31 @@ function sseResponse(chunks: Uint8Array[]): Response {
   });
 }
 
+// 按固定间隔逐个推 chunk 的 SSE 响应，用于区分「空闲超时」与「总时长上限」。
+//
+// 时间点一次性排好（第 i 个 chunk 在 (i+1) × intervalMs 到达），而不是用 pull()
+// 在「读取方来要数据时」再排。原因：pull 会被提前调用 —— read() 本身会触发一次 pull，
+// 每次 pull 又各自排一个定时器，于是下标会跑到队尾、提前 close()，
+// 落在后面的定时器再 enqueue 就抛 ERR_INVALID_STATE。
+// 这里要测的是时间，不是背压，所以用不依赖 demand 的固定时间线。
+function pacedSseResponse(payloads: string[], intervalMs: number): Response {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      payloads.forEach((payload, i) => {
+        setTimeout(() => {
+          controller.enqueue(enc.encode(payload));
+          // 最后一个 chunk 之后立刻关流
+          if (i === payloads.length - 1) controller.close();
+        }, intervalMs * (i + 1));
+      });
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
 const enc = new TextEncoder();
 
 /** 把一个上游 chunk 的 JSON 包成一条 SSE 事件 */
@@ -344,4 +369,96 @@ test('空闲超时抛错', async () => {
     () => collect(client.chatStream([{ role: 'user', content: 'hi' }])),
     /空闲超时/,
   );
+});
+
+test('无 finish_reason 也无 [DONE] 就关流时，兜底补一个 stop', async () => {
+  // 只有正文，流随即关闭：两个结束信号都没有。
+  // 这条兜底是「调用方总能收到一个 done」的最后保障。
+  mockFetch(async () =>
+    sseResponse([enc.encode(sseChunk(deltaChunk({ content: '半句话' })))]),
+  );
+
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  assert.deepEqual(events, [
+    { type: 'text-delta', text: '半句话' },
+    // 必须是 'stop'：'aborted' 的语义是「客户端主动中断生成」，属于 M6，
+    // 服务端只是没给结束标记而已
+    { type: 'done', reason: 'stop' },
+  ]);
+});
+
+test('同一 chunk 同时带 content 与 finish_reason 时，先 text-delta 后 done', async () => {
+  // 服务端常把最后一段正文和 finish_reason 放进同一个 chunk。
+  // 若两处 yield 顺序颠倒，这段正文会排在 done 之后 —— 调用方
+  // 一旦在 done 时收尾，就会吞掉回答的最后一句话。
+  mockFetch(async () =>
+    sseResponse([enc.encode(sseChunk(deltaChunk({ content: '最后一段' }, 'stop')))]),
+  );
+
+  const client = createDeepSeekClient(config);
+  // deepEqual 对数组是顺序敏感的，颠倒顺序即失败
+  assert.deepEqual(await collect(client.chatStream([{ role: 'user', content: 'hi' }])), [
+    { type: 'text-delta', text: '最后一段' },
+    { type: 'done', reason: 'stop' },
+  ]);
+});
+
+test('空闲超时按 chunk 间隔重置，不因总时长超过超时而误杀', async () => {
+  // 区分「空闲超时」与「整个流的总时长上限」：
+  // 总时长 4 × 40ms = 160ms 故意超过超时值 100ms，
+  // 但每个 chunk 的间隔（40ms）都远小于它。
+  // 只有「每次 read 都重置计时器」的实现能读完；
+  // 换成包住整个流的单一计时器会在第 3 个 chunk 之前就中断。
+  //
+  // 数值为什么放大到 100/40 而不是 30/20：「总时长 > 超时」这条判别本身是稳的
+  // （setTimeout 只会晚不会早，总时长不可能变短），真正需要留余量的是
+  // 「单个间隔别逼近超时」—— 机器有负载时 10ms 的余量会偶发失败。
+  const payloads = [
+    sseChunk(deltaChunk({ content: '一' })),
+    sseChunk(deltaChunk({ content: '二' })),
+    sseChunk(deltaChunk({ content: '三' })),
+    'data: [DONE]\n\n',
+  ];
+
+  mockFetch(async () => pacedSseResponse(payloads, 40));
+
+  const client = createDeepSeekClient(config, 100);
+  assert.deepEqual(await collect(client.chatStream([{ role: 'user', content: 'hi' }])), [
+    { type: 'text-delta', text: '一' },
+    { type: 'text-delta', text: '二' },
+    { type: 'text-delta', text: '三' },
+    { type: 'done', reason: 'stop' },
+  ]);
+});
+
+test('调用方提前退出消费时，底层流被 cancel', async () => {
+  // Task 6 的 REPL 会在「中途停止打印」时 break 出 for await。
+  // 那一刻生成器的 finally 是唯一的清理点：只 releaseLock() 的话底层流仍然活着，
+  // 真实 fetch 下 undici 的连接会悬着直到 GC 才回收。
+  let canceled = false;
+  mockFetch(async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode(sseChunk(deltaChunk({ content: '一' }))));
+        controller.enqueue(enc.encode(sseChunk(deltaChunk({ content: '二' }))));
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+    return new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    });
+  });
+
+  const client = createDeepSeekClient(config);
+  for await (const event of client.chatStream([{ role: 'user', content: 'hi' }])) {
+    if (event.type === 'text-delta') break;
+  }
+
+  // for await 的 break 会 await 生成器的 return()，也就是 await 过 finally，
+  // 所以这里不需要再等一个 tick
+  assert.equal(canceled, true);
 });

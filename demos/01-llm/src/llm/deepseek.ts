@@ -76,6 +76,7 @@ export function createDeepSeekClient(
         headers,
         // 请求体只传本次用到的两个字段；
         // stream / temperature 等都跟随服务端默认值，不额外发送
+        //
         // 本次请求的模型优先；没传才回落到构造时的默认值。
         // 这样「当前模型」可以随会话切换，而 client 本身保持无状态。
         body: JSON.stringify({ model: options?.model ?? config.model, messages }),
@@ -157,14 +158,7 @@ export function createDeepSeekClient(
 
       try {
         while (true) {
-          let result: ReadableStreamReadResult<Uint8Array>;
-          try {
-            result = await readWithIdleTimeout(reader, idleTimeoutMs);
-          } catch (error) {
-            // 超时/读失败时主动断开连接，否则底层请求会一直挂着
-            await reader.cancel().catch(() => undefined);
-            throw error;
-          }
+          const result = await readWithIdleTimeout(reader, idleTimeoutMs);
 
           if (result.done) break;
 
@@ -237,7 +231,18 @@ export function createDeepSeekClient(
           yield { type: 'done', reason: 'stop' };
         }
       } finally {
-        // 超时路径下 reader 已经被 cancel，这里只是归还锁。
+        // 清理必须在 finally 里做，因为有三条路都会走到这里：
+        // 正常读完、超时/读失败抛出、以及**调用方提前退出消费**
+        // （`for await` 里 break —— Task 6 中途停止打印就会走这条）。
+        //
+        // 只 releaseLock() 是不够的：它只是归还读锁，底层流仍然活着，
+        // 真实 fetch 下 undici 的连接会悬着直到 GC 才被回收。
+        // 对已经读完/已关闭的流调 cancel() 无害（立即 resolve），
+        // 所以正常路径不受影响。
+        //
+        // 顺序不能反：releaseLock() 之后再调 cancel() 会抛
+        // 「reader has been released」。
+        await reader.cancel().catch(() => undefined);
         try {
           reader.releaseLock();
         } catch {
