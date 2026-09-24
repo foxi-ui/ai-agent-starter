@@ -79,3 +79,33 @@ test('content 缺失时返回空串不崩溃', async () => {
   const result = await client.chat([{ role: 'user', content: 'hi' }]);
   assert.deepEqual(result, { content: '' });
 });
+
+test('fetch 抛错时向上冒泡，不被吞掉', async () => {
+  // 模拟网络层失败（DNS 解析失败 / 连接被拒）：fetch 本身 reject。
+  // 这一层刻意不 catch——吞掉异常会让上层看到一个假的空回答，
+  // 反而掩盖故障。交给 REPL 的 try/catch 决定怎么显示。
+  mockFetch(async () => {
+    throw new Error('connect ECONNREFUSED 127.0.0.1:443');
+  });
+
+  const client = createDeepSeekClient(config);
+  await assert.rejects(
+    () => client.chat([{ role: 'user', content: 'hi' }]),
+    /ECONNREFUSED/,
+  );
+});
+
+test('错误体不是 JSON 时回落为原始文本', async () => {
+  // 官方未给出错误响应体的字段名（见 docs/01-full-design.md §12），
+  // 所以 JSON 解析失败必须优雅回落到原始 body，
+  // 而不是把 SyntaxError 抛出去、让调用方看不到真正的状态码与原因。
+  mockFetch(async () =>
+    new Response('<html>502 Bad Gateway</html>', { status: 502 }),
+  );
+
+  const client = createDeepSeekClient(config);
+  await assert.rejects(
+    () => client.chat([{ role: 'user', content: 'hi' }]),
+    /502 Bad Gateway/,
+  );
+});
