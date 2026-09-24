@@ -97,7 +97,7 @@ test('fetch 抛错时向上冒泡，不被吞掉', async () => {
 });
 
 test('错误体不是 JSON 时回落为原始文本', async () => {
-  // 官方未给出错误响应体的字段名（见 docs/01-full-design.md §12），
+  // 官方未给出错误响应体的字段名（见 docs/deepseek-api-facts.md），
   // 所以 JSON 解析失败必须优雅回落到原始 body，
   // 而不是把 SyntaxError 抛出去、让调用方看不到真正的状态码与原因。
   mockFetch(async () =>

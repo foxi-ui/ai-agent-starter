@@ -17,7 +17,7 @@ import { parseSse } from '@/llm/sse.ts';
  * 它覆盖的是「**响应头之后的**首字节」——计时器在拿到 `response.body` 之后才建立，
  * `await fetch(...)` 之上没有本项目的时限（见 `DECISIONS.md` D21；真正的首字节超时归 M6）。
  *
- * 为什么不用单一总时长包住整个流：长回答会被误杀（见 docs/01-full-design.md §6）。
+ * 为什么不用单一总时长包住整个流：长回答会被误杀（见 DECISIONS.md D21）。
  */
 const STREAM_IDLE_TIMEOUT_MS = 30_000;
 

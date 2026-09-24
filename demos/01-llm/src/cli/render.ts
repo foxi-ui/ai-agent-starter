@@ -27,7 +27,7 @@ export interface StreamRenderer {
 /**
  * 一轮回答在 stdout 上的前缀。
  *
- * 需求形状是 `You: 问` / `AI: 答` 交替（见 `docs/00-index.md`、spec §2、README）。
+ * 需求形状是 `You: 问` / `AI: 答` 交替（见 spec §2 与 README）。
  * 流式下它必须在**第一段正文之前**写出，所以由渲染器持有 ——
  * 这正是「渲染器负责一轮长什么样」的职责。
  */
