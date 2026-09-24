@@ -4,7 +4,7 @@
 - 状态：待 review
 - 范围：M2 —— **streaming（SSE 流式输出）** + **`/clear` `/model` `/history` 三个命令**
 - 前置：M1（非流式多轮对话 + 最小错误处理）已完成，见 `docs/superpowers/specs/2026-09-23-ai-chat-design.md`
-- 约束来源：`docs/01-full-design.md` §2 / §3 / §5 / §6
+- 约束来源：`ARCHITECTURE.md`，以及本文 §7（SSE 契约）/ §8（流式请求契约）
 
 本 spec 拆成两个实施计划，因为两半互不依赖、各自可独立验收：
 

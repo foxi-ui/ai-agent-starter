@@ -1,7 +1,7 @@
 # DeepSeek API 事实汇总
 
 > 查表用。设计叙述见 `ARCHITECTURE.md`，坑与解法见 `troubleshooting.md`。
-> 来源：原 `docs/01-full-design.md` §12，2026-09-24 迁出。
+> 来源：原 01-llm 完整蓝图 §12（现 `archive/01-llm/01-full-design.md`），2026-09-24 迁出。
 
 （脑暴阶段已核实，供后续增量直接引用，避免凭记忆。）
 

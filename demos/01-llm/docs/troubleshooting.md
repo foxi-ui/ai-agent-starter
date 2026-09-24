@@ -277,7 +277,7 @@ for (const e of entries) {
 
 | 口径 | `2bc17a91` 会话 |
 | --- | --- |
-| 文档价目表（`01-full-design.md` §12 的 flash 峰值价） | $0.321 |
+| 文档价目表（`deepseek-api-facts.md` 的 flash 峰值价） | $0.321 |
 | 本地 `cost-state` 记账 | $12.16 |
 
 两者差约 **38 倍**，原因未查明（可能 `deepseek-flash[1M]` 有独立价目表，也可能本地计价模型没跟上）。**要拿准数只能核对真实账单。**

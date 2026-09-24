@@ -9,7 +9,7 @@ LLM API → 消息结构 → 上下文管理 → Streaming → 错误处理 → 
 ```
 
 > **当前范围：仅「对话部分」**——多轮对话（非流式 + **流式 SSE**）+ 最小错误处理。
-> 完整功能蓝图（命令、落盘、token 统计、structured output 等）见 [`docs/01-full-design.md`](docs/01-full-design.md)。
+> 蓝图中尚未落地的项（token 统计、structured output、上下文裁剪等）见 [`EVALUATION.md`](EVALUATION.md)。
 
 ## 环境要求
 
@@ -177,7 +177,5 @@ AI: ...
 | [`DECISIONS.md`](DECISIONS.md) | 为什么这样设计？ |
 | [`EVALUATION.md`](EVALUATION.md) | 路线图的验收项达没达标？证据是什么？ |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | 报这个错怎么办？怎么避免再犯？ |
-| [`docs/00-index.md`](docs/00-index.md) | 原始需求 |
-| [`docs/01-full-design.md`](docs/01-full-design.md) | 完整功能蓝图 |
+| [`docs/deepseek-api-facts.md`](docs/deepseek-api-facts.md) | 模型名 / 价目 / 错误码查表 |
 | [`docs/superpowers/specs/`](docs/superpowers/specs/) | 本次增量的设计 spec |
-| [`docs/superpowers/plans/`](docs/superpowers/plans/) | 本次增量的实施计划 |
