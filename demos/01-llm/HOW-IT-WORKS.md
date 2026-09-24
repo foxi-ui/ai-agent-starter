@@ -197,9 +197,10 @@ AI: ...
 | `fetch` 抛错（DNS / 连接拒绝） | 同上，异常向上冒泡到 REPL 的 `try/catch` |
 | 响应缺 `choices[0].message.content` | 不抛错，返回 `content: ''` |
 
-**输出去向**：模型回答走 **stdout**，错误与诊断走 **stderr**。
-因此 `pnpm start > answers.txt` 得到的文件里只有回答；
-`pnpm start 2>/dev/null` 也能单独屏蔽报错。
+**输出去向**：模型回答**与命令结果**走 **stdout**，错误与诊断走 **stderr**。
+因此 `pnpm start > answers.txt` 得到的文件里有回答**和命令结果**（`/clear` 的清空提示、
+`/history` 的列表），只是没有报错；`pnpm start 2>/dev/null` 也能单独屏蔽报错。
+命令结果为何也走 stdout，见下方「命令：为什么它们不进上下文」与 `DECISIONS.md` D26。
 
 `ReplOptions` 因此有两个输出通道（`output` / `errorOutput`），
 且都是必填字段——忘记分流会在类型检查阶段被拦下。

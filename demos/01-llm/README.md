@@ -114,6 +114,9 @@ AI: ...
 命令**不进入对话上下文**，也不会被发给模型。`/model` 不校验模型名 ——
 写错的名字会在下一次请求时由 API 报错（走 stderr）。
 
+命令结果走 **stdout** —— 与模型回答一样落在重定向文件里（`pnpm start > answers.txt`
+能看到 `/clear` 的清空提示与 `/history` 的列表）；**未知命令提示与错误**走 **stderr**。
+
 ## 项目结构
 
 ```text
@@ -155,7 +158,8 @@ AI: ...
 - 思考过程默认不展开，仅在 stderr 给一行 `[思考中…]` 指示
 - `system` / `user` / `assistant` 三种 role 的消息组装
 - 最小错误处理：API 报错打印到 **stderr** 后继续循环，不崩溃、不污染上下文；
-  模型回答走 stdout，两条流互不干扰（`pnpm start > answers.txt` 只拿到回答）
+  模型回答**与命令结果**走 stdout，两条流互不干扰
+  （`pnpm start > answers.txt` 里只有回答与命令结果，没有报错）
 
 **尚未实现（后续增量）**
 
