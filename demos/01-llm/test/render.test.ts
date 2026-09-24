@@ -173,6 +173,25 @@ test('renderCommandResult /history 每条截断到 200 字符', () => {
   assert.equal(text, `1. [user] ${'x'.repeat(200)}…\n`);
 });
 
+test('renderCommandResult /history 恰好 200 字符不截断', () => {
+  // 边界：截断条件是 `<= 200` 原样返回，写成 `< 200` 就会把恰好 200 的消息
+  // 也切掉一截并加省略号。这条用例专门钉住这个「差一个」的边界。
+  const out = collector();
+  renderCommandResult(
+    { kind: 'history', messages: [{ role: 'user', content: 'x'.repeat(200) }] },
+    { output: out.stream },
+  );
+  assert.equal(out.chunks.join(''), `1. [user] ${'x'.repeat(200)}\n`);
+
+  // 边界另一侧：201 已经越界，必须截断
+  const over = collector();
+  renderCommandResult(
+    { kind: 'history', messages: [{ role: 'user', content: 'x'.repeat(201) }] },
+    { output: over.stream },
+  );
+  assert.equal(over.chunks.join(''), `1. [user] ${'x'.repeat(200)}…\n`);
+});
+
 test('renderUnknownCommand 写 stderr，可用列表来自 COMMAND_NAMES', () => {
   const err = collector();
   renderUnknownCommand('/foo', { errorOutput: err.stream });

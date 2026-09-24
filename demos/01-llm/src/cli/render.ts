@@ -93,6 +93,14 @@ export function createStreamRenderer(options: {
 /** `/history` 里每条消息最多显示多少字符 */
 const HISTORY_PREVIEW_CHARS = 200;
 
+/**
+ * 截断过长的历史消息。
+ *
+ * 计数单位是 **UTF-16 码元**（`text.length`），所以第 200 个码元处若正好落在
+ * 代理对（emoji 等辅助平面字符）中间，会把它切成两个孤立码元。这是**有意接受**
+ * 的取舍：改成按码点截同样会切开 ZWJ 组合字形（如 👨‍👩‍👧），要彻底安全得上
+ * `Intl.Segmenter` —— 对一条终端预览而言，成本远高于收益。
+ */
 function truncate(text: string): string {
   if (text.length <= HISTORY_PREVIEW_CHARS) return text;
   return `${text.slice(0, HISTORY_PREVIEW_CHARS)}…`;
@@ -134,6 +142,13 @@ export function renderCommandResult(
         write(`${index + 1}. [${message.role}] ${truncate(message.content)}`);
       });
       return;
+    }
+
+    default: {
+      // 穷尽性守卫：给 CommandResult 加第 5 个变体却忘了在这里处理时，
+      // 这行会编译报错，而不是让用户敲了新命令只看到空屏。
+      const _exhaustive: never = result;
+      void _exhaustive;
     }
   }
 }

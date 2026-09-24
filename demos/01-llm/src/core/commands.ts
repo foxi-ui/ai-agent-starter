@@ -65,6 +65,18 @@ export function parseCommand(line: string): ParsedCommand {
 /**
  * 执行一个已知命令。
  *
+ * 这里的 switch 没有 `default`，但**并非没有穷尽性守卫** —— 返回注解
+ * `: CommandResult` 加上 `strict` 就是那个守卫：给 `CommandName` 加第 4 个命令名
+ * 却忘了在这里处理时，函数会有路径走到末尾却不返回，编译器报 TS2366。
+ *
+ * 它与 `cli/render.ts` 的 `renderCommandResult` 里那个显式 `never` 守卫
+ * **作用等价、写法必须不同**：那边函数返回 void，漏一个变体时编译器不会出声，
+ * 所以才必须显式写出来。两者守的轴也不同 —— 这边守 `CommandName`（新增命令忘了实现），
+ * 那边守 `CommandResult`（新增结果类型忘了渲染）。
+ *
+ * 看到「一处有一处没有」时不要试图去「统一」它们：把这边的返回注解改成显式守卫
+ * 会改变公开签名；把那边显式的删掉则直接失去守卫。
+ *
  * @param name 命令名
  * @param argument 参数（可能为空串）
  * @param session 被操作的会话；`/clear` 与 `/model` 会改它
