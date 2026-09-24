@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一条事件，可能被切成两半</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+  /* ── 设计令牌：先在裸 :root 定义完整浅色，再让深色覆写 ── */
+  :root {
+    --ground:      #F4F5F7;
+    --surface:     #FFFFFF;
+    --surface-sunk:#EDEFF3;
+    --ink:         #191C22;
+    --ink-soft:    #5B6270;
+    --ink-faint:   #8A92A0;
+    --line:        #DCE0E7;
+    --line-strong: #C2C8D2;
+
+    /* 中性：rest 是「还没成形的残渣」，刻意用无色相 */
+    --system:      #707A8A;
+    --system-bg:   #E7EAEF;
+
+    /* 靛蓝：第 1 次 read 带来的字节 */
+    --chunkA:      #3D50B4;
+    --chunkA-bg:   #E7EAFB;
+
+    /* 琥珀：第 2 次 read 带来的字节 */
+    --chunkB:      #96590A;
+    --chunkB-bg:   #FBEFDC;
+
+    --accent:      #3D50B4;
+    --warn:        #A63B3B;
+    --warn-bg:     #FAEBEB;
+    --shadow:      0 1px 2px rgba(20, 24, 33, .06), 0 4px 12px rgba(20, 24, 33, .05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground:      #11141A;
+      --surface:     #191D25;
+      --surface-sunk:#151920;
+      --ink:         #E7EAF0;
+      --ink-soft:    #9BA3B2;
+      --ink-faint:   #737C8C;
+      --line:        #2B313C;
+      --line-strong: #3C4350;
+
+      --system:      #98A1B0;
+      --system-bg:   #232833;
+
+      --chunkA:      #93A2F0;
+      --chunkA-bg:   #1F2540;
+
+      --chunkB:      #E2AB5E;
+      --chunkB-bg:   #33260F;
+
+      --accent:      #93A2F0;
+      --warn:        #E89393;
+      --warn-bg:     #35201F;
+      --shadow:      0 1px 2px rgba(0, 0, 0, .4), 0 4px 14px rgba(0, 0, 0, .3);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground:      #11141A;
+    --surface:     #191D25;
+    --surface-sunk:#151920;
+    --ink:         #E7EAF0;
+    --ink-soft:    #9BA3B2;
+    --ink-faint:   #737C8C;
+    --line:        #2B313C;
+    --line-strong: #3C4350;
+
+    --system:      #98A1B0;
+    --system-bg:   #232833;
+
+    --chunkA:      #93A2F0;
+    --chunkA-bg:   #1F2540;
+
+    --chunkB:      #E2AB5E;
+    --chunkB-bg:   #33260F;
+
+    --accent:      #93A2F0;
+    --warn:        #E89393;
+    --warn-bg:     #35201F;
+    --shadow:      0 1px 2px rgba(0, 0, 0, .4), 0 4px 14px rgba(0, 0, 0, .3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'Noto Sans SC', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-size: 16px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 940px;
+    margin: 0 auto;
+    padding-block: 56px 96px;
+    padding-inline: 20px;
+  }
+
+  .prose { max-width: 65ch; }
+
+  h1, h2, h3 {
+    font-family: 'Bricolage Grotesque', 'Noto Sans SC', system-ui, sans-serif;
+    text-wrap: balance;
+    line-height: 1.25;
+    margin: 0;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 5.5vw, 3.1rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin-bottom: 18px;
+  }
+
+  h2 {
+    font-size: clamp(1.3rem, 3vw, 1.6rem);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 14px;
+  }
+
+  h3 {
+    font-size: 1.02rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  p { margin: 0 0 16px; }
+
+  .lede {
+    font-size: 1.12rem;
+    color: var(--ink-soft);
+    max-width: 60ch;
+  }
+
+  section {
+    margin-top: 64px;
+    padding-top: 40px;
+    border-top: 1px solid var(--line);
+  }
+
+  section:first-of-type { border-top: 0; padding-top: 0; margin-top: 48px; }
+
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 10px;
+  }
+
+  code {
+    font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 0.88em;
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+
+  strong { font-weight: 700; }
+
+  .hl { color: var(--accent); font-weight: 700; }
+
+  /* ── 结论卡片：整页的题眼 ── */
+  .thesis {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 20px 24px;
+    margin-top: 28px;
+    box-shadow: var(--shadow);
+  }
+  .thesis p:last-child { margin-bottom: 0; }
+
+  /* ── 图表容器 ── */
+  figure {
+    margin: 30px 0 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 24px 20px 16px;
+    box-shadow: var(--shadow);
+  }
+
+  figure svg { display: block; width: 100%; height: auto; max-width: 100%; }
+
+  figcaption {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--line);
+    font-size: 0.86rem;
+    color: var(--ink-soft);
+    line-height: 1.6;
+  }
+
+  /* ── 流水线步骤 ── */
+  .flow { display: flex; flex-direction: column; gap: 0; margin-top: 6px; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 14px;
+    align-items: start;
+    padding: 13px 0;
+  }
+
+  .step + .step { border-top: 1px solid var(--line); }
+
+  .step-n {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--ink-faint);
+    padding-top: 3px;
+  }
+
+  .step-what { font-weight: 500; }
+  .step-code {
+    display: block;
+    margin-top: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    overflow-x: auto;
+  }
+  .step-where {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--ink-faint);
+    letter-spacing: 0.03em;
+  }
+
+  /* ── 字节 / 字符格：本页的核心可视化 ── */
+  .strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-items: flex-end;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .cell {
+    border: 1px solid var(--line-strong);
+    border-radius: 5px;
+    padding: 3px 6px;
+    font-size: 0.78rem;
+    line-height: 1.35;
+    text-align: center;
+    background: var(--surface-sunk);
+    color: var(--ink-soft);
+    white-space: pre;
+  }
+
+  .cell--a  { border-color: var(--chunkA); background: var(--chunkA-bg); color: var(--chunkA); }
+  .cell--b  { border-color: var(--chunkB); background: var(--chunkB-bg); color: var(--chunkB); }
+  .cell--sys{ border-style: dashed; }
+  .cell--wide { padding-inline: 11px; }
+
+  /* 被切开的多字节字符：用斜切成两半表示 */
+  .cell--cut {
+    background: repeating-linear-gradient(115deg, var(--warn-bg) 0 5px, var(--surface-sunk) 5px 10px);
+    border-color: var(--warn);
+    color: var(--warn);
+    font-weight: 600;
+  }
+
+  .strip-note {
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+    margin-top: 8px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* ── 事件单元（复用「消息」组件的语义）── */
+  .arr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    align-items: stretch;
+  }
+
+  .msg {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border: 1px solid;
+    border-radius: 7px;
+    padding: 5px 9px 6px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    min-width: 0;
+  }
+
+  .msg-role {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.61rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+
+  .msg-body { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+
+  .msg--rest {
+    border-color: var(--line-strong);
+    border-style: dashed;
+    background: var(--system-bg);
+    color: var(--system);
+  }
+
+  .msg--a {
+    border-color: var(--chunkA);
+    background: var(--chunkA-bg);
+    color: var(--chunkA);
+  }
+
+  .msg--b {
+    border-color: var(--chunkB);
+    background: var(--chunkB-bg);
+    color: var(--chunkB);
+  }
+
+  .msg--none {
+    border-color: var(--line);
+    background: none;
+    color: var(--ink-faint);
+  }
+
+  /* ── 轮次抽屉（表示「一次 read」）── */
+  .turn {
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    overflow: hidden;
+    background: var(--surface);
+    margin-top: 14px;
+  }
+
+  .turn-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+    padding: 9px 14px;
+    background: var(--surface-sunk);
+    border-bottom: 1px solid var(--line);
+    font-size: 0.8rem;
+  }
+
+  .turn-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 0.76rem;
+    letter-spacing: 0.03em;
+  }
+
+  .turn-note { color: var(--ink-faint); font-size: 0.76rem; }
+
+  .turn-body { padding: 14px; }
+
+  .turn--a .turn-head { border-left: 3px solid var(--chunkA); }
+  .turn--b .turn-head { border-left: 3px solid var(--chunkB); }
+
+  .between {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 4px;
+    color: var(--ink-faint);
+    font-size: 0.79rem;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .between::before {
+    content: "";
+    width: 2px;
+    height: 16px;
+    background: var(--line-strong);
+    flex: none;
+    margin-left: 10px;
+  }
+
+  /* ── 标注 ── */
+  .bracket {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--line);
+    font-size: 0.79rem;
+    color: var(--ink-soft);
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid;
+  }
+
+  .tag--a { border-color: var(--chunkA); color: var(--chunkA); background: var(--chunkA-bg); }
+  .tag--b { border-color: var(--chunkB); color: var(--chunkB); background: var(--chunkB-bg); }
+  .tag--sys { border-color: var(--line-strong); color: var(--system); background: var(--system-bg); border-style: dashed; }
+
+  /* ── 困惑卡片 ── */
+  .qa {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-top: 26px;
+  }
+
+  .qa-item {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 16px 18px;
+  }
+
+  .qa-q {
+    font-family: 'Bricolage Grotesque', 'Noto Sans SC', sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin-bottom: 6px;
+  }
+
+  .qa-a { font-size: 0.88rem; color: var(--ink-soft); margin: 0; }
+  .qa-a code { font-size: 0.82em; }
+
+  /* ── 文件表 ── */
+  .files {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 22px;
+    font-size: 0.85rem;
+  }
+
+  .files th, .files td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+
+  .files th {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+
+  .files td:first-child {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    white-space: nowrap;
+    color: var(--accent);
+  }
+
+  .scroll-x { overflow-x: auto; }
+
+  /* ── 对照：两种写法 / 两种结果 ── */
+  .modes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+
+  .mode {
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 15px 17px;
+    background: var(--surface);
+  }
+
+  .mode--ok  { border-left: 3px solid var(--accent); }
+  .mode--bad { border-left: 3px solid var(--warn); }
+
+  .mode-head {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 7px;
+  }
+
+  .mode--ok  .mode-head { color: var(--accent); }
+  .mode--bad .mode-head { color: var(--warn); }
+
+  .mode-body { font-size: 0.86rem; color: var(--ink-soft); margin: 0; }
+  .mode-body code { font-size: 0.82em; }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--line);
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+  }
+
+  .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+
+  .swatch { width: 22px; height: 10px; border-radius: 3px; flex: none; }
+  .swatch--a { background: var(--chunkA); }
+  .swatch--b { background: var(--chunkB); }
+  .swatch--bad { background: var(--warn); }
+
+  .h3-block { margin-top: 40px; }
+
+  a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  .runbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 15px;
+    padding: 11px 15px;
+    border-radius: 8px;
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.81rem;
+    overflow-x: auto;
+  }
+
+  .runbox .prompt { color: var(--accent); font-weight: 600; flex: none; }
+  .runbox .cmd { white-space: nowrap; color: var(--ink); }
+
+  pre.code {
+    margin: 16px 0 0;
+    padding: 16px 18px;
+    border-radius: 9px;
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.77rem;
+    line-height: 1.7;
+    color: var(--ink-soft);
+    tab-size: 2;
+  }
+
+  /* 全局 code 样式带背景/边框/nowrap，会撑坏多行代码块 —— 这里必须重置 */
+  pre.code code {
+    background: none;
+    border: 0;
+    padding: 0;
+    white-space: pre;
+    font-size: inherit;
+    color: inherit;
+  }
+
+  pre.code .hi { color: var(--ink); font-weight: 600; }
+  pre.code .ok { color: var(--accent); }
+  pre.code .bad { color: var(--warn); }
+  pre.code .cmt { color: var(--ink-faint); }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+  }
+
+  @media (max-width: 520px) {
+    .wrap { padding-block: 36px 64px; }
+    section { margin-top: 48px; padding-top: 32px; }
+    figure { padding: 18px 14px 14px; }
+    .step-code { white-space: normal; word-break: break-all; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">ai-chat · SSE 是怎么解析的</div>
+    <h1>一条事件，可能被切成两半</h1>
+    <p class="lede">
+      <code>src/llm/sse.ts</code> 只有 82 行，却是整个项目里最容易写错的一块。
+      难点不在语法，在一个反直觉的前提上：<strong>网络交给你的不是「消息」，是字节</strong>。
+    </p>
+
+    <div class="thesis">
+      <p>
+        服务端按「事件」写，你的程序按「块」收，<strong>两者的边界毫无关系</strong>。
+      </p>
+      <p>
+        所以分帧的本质是：<span class="hl">自己攒、自己找边界、把不完整的留给下一次</span>。
+        这页把它拆成 4 层来看 —— 每一层只解决一个问题。
+      </p>
+    </div>
+  </header>
+
+  <!-- ─────────── 1. 问题的起点 ─────────── -->
+  <section>
+    <div class="eyebrow">第一步</div>
+    <h2>TCP 不给你「消息」这个概念</h2>
+    <p class="prose">
+      服务端把 4 条事件写进连接，它们在服务端那边是清清楚楚的 4 段。
+      但这 4 段怎么送到你的程序里，<strong>TCP 完全不保证</strong>：
+      它只保证字节顺序不变，不保证「一次 <code>read()</code> 恰好给你一条消息」。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 760 300" role="img" aria-label="上半是服务端写出的四条事件，边界整齐；下半是同样的字节到达你的程序时被切成三块，两块之间的切割线穿过事件中间">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- 上：服务端视角 -->
+        <text x="16" y="24" font-size="12" font-weight="700" fill="currentColor">服务端写出去的（4 条事件，边界整齐）</text>
+        <g opacity="0.9">
+          <rect x="16"  y="38" width="170" height="34" rx="6" fill="currentColor" opacity="0.10"/>
+          <text x="101" y="60" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">事件 1</text>
+          <rect x="192" y="38" width="170" height="34" rx="6" fill="currentColor" opacity="0.10"/>
+          <text x="277" y="60" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">事件 2</text>
+          <rect x="368" y="38" width="170" height="34" rx="6" fill="currentColor" opacity="0.10"/>
+          <text x="453" y="60" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">事件 3</text>
+          <rect x="544" y="38" width="170" height="34" rx="6" fill="currentColor" opacity="0.10"/>
+          <text x="629" y="60" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">事件 4</text>
+        </g>
+
+        <!-- 箭头 -->
+        <line x1="365" y1="84" x2="365" y2="126" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah)"/>
+        <text x="382" y="110" font-size="11" fill="currentColor" opacity="0.75">经过 TCP / TLS / 内核缓冲……</text>
+
+        <!-- 下：你的程序视角 -->
+        <text x="16" y="152" font-size="12" font-weight="700" fill="currentColor">你的程序 read() 到的（3 块，边界乱切）</text>
+
+        <rect x="16" y="166" width="250" height="34" rx="6" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.55"/>
+        <text x="141" y="188" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">第 1 块</text>
+        <rect x="272" y="166" width="250" height="34" rx="6" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.55"/>
+        <text x="397" y="188" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">第 2 块</text>
+        <rect x="528" y="166" width="216" height="34" rx="6" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.55"/>
+        <text x="636" y="188" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">第 3 块</text>
+
+        <!-- 切割线的示意：落在事件中间 -->
+        <line x1="266" y1="158" x2="266" y2="208" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3" opacity="0.8"/>
+        <line x1="522" y1="158" x2="522" y2="208" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3" opacity="0.8"/>
+
+        <text x="266" y="228" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">切在事件 2 中间</text>
+        <text x="522" y="228" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">切在事件 3 中间</text>
+
+        <text x="16" y="266" font-size="11" fill="currentColor" opacity="0.7">
+          切割线落在哪里，是网络决定的 —— 它和「事件」这个单位没有任何关系
+        </text>
+      </svg>
+      <figcaption>
+        所以「一次 <code>read()</code> 得到什么」是不可预测的：可能一次拿到 3 条完整事件，
+        也可能只拿到半条。分帧代码必须同时处理这两种极端，以及它们之间的所有情况。
+      </figcaption>
+    </figure>
+
+    <p class="prose" style="margin-top:24px">
+      这正是 <code>parseSse</code> 存在的理由。它<strong>不假设块和事件有任何对齐关系</strong> ——
+      每次只做一件事：把手上的文字尽量切成完整事件，切不动的原样留下。
+    </p>
+  </section>
+
+  <!-- ─────────── 2. SSE 的格式 ─────────── -->
+  <section>
+    <div class="eyebrow">第二步</div>
+    <h2>SSE 的格式其实只有 4 条规则</h2>
+    <p class="prose">
+      事件是<strong>纯文本</strong>（不是 JSON、不是二进制），格式是文本行：
+      每行 <code>字段名: 值</code>，一段事件结束时打一个<strong>空行</strong>。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 760 340" role="img" aria-label="一条 SSE 报文的解剖：event 字段给事件命名，data 字段装内容，多行 data 会拼接，最后空行才是分派边界">
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- 原文 -->
+        <rect x="16" y="20" width="330" height="196" rx="8" fill="none" stroke="currentColor" stroke-width="1.3" opacity="0.5"/>
+        <text x="30" y="44"  font-size="12" font-family="monospace" fill="currentColor">: keep-alive</text>
+        <text x="30" y="72"  font-size="12" font-family="monospace" fill="currentColor">event: ping</text>
+        <text x="30" y="100" font-size="12" font-family="monospace" fill="currentColor">data: 第一行</text>
+        <text x="30" y="128" font-size="12" font-family="monospace" fill="currentColor">data: 第二行</text>
+        <text x="30" y="156" font-size="12" font-family="monospace" fill="currentColor">id: 42</text>
+        <text x="30" y="184" font-size="11" font-family="monospace" fill="currentColor" opacity="0.55">(空行 ← 这一段到此结束)</text>
+
+        <!-- 标注 -->
+        <line x1="352" y1="40"  x2="404" y2="40"  stroke="currentColor" stroke-width="1" marker-end="url(#ah2)" opacity="0.6"/>
+        <text x="414" y="44"  font-size="11.5" fill="currentColor">注释行 —— 忽略（服务端拿它保活）</text>
+
+        <line x1="352" y1="68"  x2="404" y2="68"  stroke="currentColor" stroke-width="1" marker-end="url(#ah2)" opacity="0.6"/>
+        <text x="414" y="72"  font-size="11.5" fill="currentColor">事件名 —— 缺省是 message</text>
+
+        <line x1="352" y1="114" x2="404" y2="114" stroke="currentColor" stroke-width="1" marker-end="url(#ah2)" opacity="0.6"/>
+        <text x="414" y="118" font-size="11.5" fill="currentColor">内容 —— 多行 data 会拼成一条</text>
+
+        <line x1="352" y1="152" x2="404" y2="152" stroke="currentColor" stroke-width="1" marker-end="url(#ah2)" opacity="0.6"/>
+        <text x="414" y="156" font-size="11.5" fill="currentColor">其他字段 —— 本项目忽略</text>
+
+        <line x1="352" y1="182" x2="404" y2="182" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah2)" opacity="0.9"/>
+        <text x="414" y="186" font-size="11.5" font-weight="700" fill="currentColor">空行 —— 唯一的「分派」信号</text>
+
+        <!-- 结果 -->
+        <rect x="16" y="244" width="728" height="76" rx="8" fill="currentColor" opacity="0.06"/>
+        <text x="32" y="270" font-size="11.5" font-family="monospace" fill="currentColor">上面的报文解析出来 =</text>
+        <text x="32" y="298" font-size="12" font-family="monospace" fill="currentColor" opacity="0.9">{ event: 'ping', data: '第一行\n第二行' }</text>
+        <text x="470" y="270" font-size="11" fill="currentColor" opacity="0.65">注释行与 id 都没进去 ——</text>
+        <text x="470" y="292" font-size="11" fill="currentColor" opacity="0.65">它们不参与 data 的拼接</text>
+      </svg>
+      <figcaption>
+        <strong>4 条规则</strong>：① 空行才是分派边界（单个换行不是）；② 多行 <code>data:</code> 用 <code>\n</code> 拼成一条；
+        ③ <code>:</code> 开头是注释，忽略；④ 一个块里<strong>没有 <code>data:</code> 就不产出事件</strong>。
+      </figcaption>
+    </figure>
+
+    <p class="prose" style="margin-top:24px">
+      这 4 条正好对应 <code>parseBlock</code> 里的 4 个判断。
+      其中第 ④ 条最容易忽略 —— 它是「只有注释的块」和「只有 <code>event:</code> 的块」都不会
+      产出事件的原因，测试里专门有两条钉着它。
+    </p>
+  </section>
+
+  <!-- ─────────── 3. 两层 ─────────── -->
+  <section>
+    <div class="eyebrow">第三步 · 关键</div>
+    <h2>「解码」和「分帧」是两层，不能混</h2>
+    <p class="prose">
+      这是最容易搞混的一点。<strong>网络给你的是字节（<code>Uint8Array</code>），
+      而 <code>parseSse</code> 收的是字符串</strong>。中间那一步是解码，
+      它<strong>不属于 <code>sse.ts</code></strong> —— 它写在 <code>deepseek.ts</code> 里。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 760 300" role="img" aria-label="两层管线：字节流先经 TextDecoder 解码成字符串，再经 parseSse 分帧成事件；中文「你」的 3 个字节可能被切在两次 read 之间">
+        <defs>
+          <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- 层 1：字节 -->
+        <text x="16" y="30" font-size="11.5" font-weight="700" fill="currentColor">① 字节层 —— response.body 逐块到达</text>
+        <g font-family="monospace" font-size="11" fill="currentColor">
+          <rect x="16"  y="42" width="34" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/><text x="33"  y="62" text-anchor="middle">64</text>
+          <rect x="54"  y="42" width="34" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/><text x="71"  y="62" text-anchor="middle">61</text>
+          <rect x="92"  y="42" width="34" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/><text x="109" y="62" text-anchor="middle">74</text>
+          <rect x="130" y="42" width="34" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/><text x="147" y="62" text-anchor="middle">61</text>
+          <rect x="168" y="42" width="34" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.9"/><text x="185" y="62" text-anchor="middle">e4</text>
+          <rect x="206" y="42" width="34" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.9"/><text x="223" y="62" text-anchor="middle">bd</text>
+          <rect x="244" y="42" width="34" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.9"/><text x="261" y="62" text-anchor="middle">a0</text>
+          <rect x="282" y="42" width="34" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/><text x="299" y="62" text-anchor="middle">0a</text>
+        </g>
+        <line x1="206" y1="34" x2="206" y2="80" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3"/>
+        <text x="212" y="96" font-size="11" fill="currentColor" opacity="0.8">「你」= 3 个字节，切割线可能落在它们之间</text>
+
+        <!-- 层 2 -->
+        <line x1="380" y1="58" x2="424" y2="58" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah3)"/>
+        <text x="118" y="130" font-size="11.5" font-weight="700" fill="currentColor">② 解码 —— TextDecoder 的活，不是 sse.ts 的活</text>
+        <rect x="16" y="142" width="352" height="46" rx="7" fill="currentColor" opacity="0.08"/>
+        <text x="32" y="170" font-size="11.5" font-family="monospace" fill="currentColor">decoder.decode(chunk, { stream: true })</text>
+
+        <!-- 层 3 -->
+        <line x1="380" y1="165" x2="424" y2="165" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah3)"/>
+        <text x="440" y="130" font-size="11.5" font-weight="700" fill="currentColor">③ 分帧 —— sse.ts 的活</text>
+        <rect x="440" y="142" width="304" height="46" rx="7" fill="currentColor" opacity="0.08"/>
+        <text x="456" y="170" font-size="11.5" font-family="monospace" fill="currentColor">parseSse(字符串, rest)</text>
+
+        <!-- 结果 -->
+        <line x1="592" y1="196" x2="592" y2="222" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah3)"/>
+        <rect x="440" y="228" width="304" height="46" rx="7" fill="none" stroke="currentColor" stroke-width="1.3" opacity="0.6"/>
+        <text x="456" y="256" font-size="11.5" font-family="monospace" fill="currentColor">SseEvent[] + rest</text>
+
+        <text x="16" y="256" font-size="11" fill="currentColor" opacity="0.7">字符串层才谈得上「行」和「空行」——</text>
+        <text x="16" y="278" font-size="11" fill="currentColor" opacity="0.7">所以分帧必须在解码之后。</text>
+      </svg>
+      <figcaption>
+        <code>sse.ts</code> 的入参写的是「<strong>调用方已用 TextDecoder 解好码</strong>」，
+        这不是客套话 —— 它划定了两层之间的责任线。
+      </figcaption>
+    </figure>
+
+    <h3 class="h3-block">为什么这层不能省：中文会被切在中间</h3>
+    <p class="prose">
+      一个中文字在 UTF-8 里占 3 个字节。切割线落在第 1 个字节之后时，
+      <strong>两次 <code>read()</code> 各自拿到的都不是完整字符</strong>。
+      下面是真的跑出来的结果：
+    </p>
+
+    <div class="modes">
+      <div class="mode mode--bad">
+        <div class="mode-head">✗ new TextDecoder()　不加 stream</div>
+        <p class="mode-body">
+          两半分别解出 <code>"data: �"</code> 与 <code>"��好\n\n"</code>，拼起来是
+          <code>"data: ���好\n\n"</code>。<br>
+          <strong>损坏不可逆</strong> —— 原始字节已经变成替换字符 U+FFFD，再也拼不回来。
+        </p>
+      </div>
+      <div class="mode mode--ok">
+        <div class="mode-head">✓ new TextDecoder()　decode(bytes, { stream: true })</div>
+        <p class="mode-body">
+          两半分别解出 <code>"data: "</code> 与 <code>"你好\n\n"</code>，拼起来是
+          <code>"data: 你好\n\n"</code>，<strong>完好</strong>。<br>
+          <code>stream: true</code> 让解码器把「还没凑齐一个字符」的那几个字节<strong>存在自己内部</strong>，等下一块。
+        </p>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span class="legend-item"><span class="swatch swatch--a"></span> 第 1 次 read 带来的字节</span>
+      <span class="legend-item"><span class="swatch swatch--b"></span> 第 2 次 read 带来的字节</span>
+    </div>
+  </section>
+
+  <!-- ─────────── 4. parseSse 的形状 ─────────── -->
+  <section>
+    <div class="eyebrow">第四步 · 核心</div>
+    <h2><code>parseSse</code> 的形状：残余接力</h2>
+    <p class="prose">
+      它的签名看起来有点怪 —— 为什么要传一个 <code>buffer</code> 进去、又要一个 <code>rest</code> 出来？
+      因为<strong>它自己什么都不记</strong>。「攒着没切完的那半截」这件事，
+      被交回给调用方保管，下一次再传进来。
+    </p>
+
+<pre class="code"><code>parseSse(chunk, buffer?) → { events, rest }
+         ↑新到的     ↑上次剩下的        ↑这次能切出的  ↑留给下次的</code></pre>
+
+    <figure>
+      <svg viewBox="0 0 760 260" role="img" aria-label="残余接力：第一次传入 data: he 得到零个事件和 rest，rest 原样回传，第二次拼上 llo 与空行才切出一个事件">
+        <defs>
+          <marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- 第一次 -->
+        <text x="16" y="30" font-size="11.5" font-weight="700" fill="currentColor">第 1 次调用</text>
+        <rect x="16" y="42" width="150" height="34" rx="6" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/>
+        <text x="91" y="64" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">chunk = "data: he"</text>
+        <line x1="172" y1="59" x2="212" y2="59" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah4)"/>
+        <rect x="220" y="42" width="180" height="34" rx="6" fill="currentColor" opacity="0.08"/>
+        <text x="310" y="64" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">parseSse(chunk)</text>
+        <line x1="406" y1="59" x2="446" y2="59" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah4)"/>
+        <text x="456" y="52" font-size="11" font-family="monospace" fill="currentColor">events = []</text>
+        <text x="456" y="72" font-size="11" font-family="monospace" fill="currentColor" opacity="0.85">rest = "data: he"</text>
+
+        <!-- 中间：rest 回传 -->
+        <path d="M 540 84 L 540 116 L 91 116 L 91 100" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ah4)"/>
+        <text x="300" y="134" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.85">
+          调用方把 rest 原样留着，下一次当作 buffer 传回来
+        </text>
+
+        <!-- 第二次 -->
+        <text x="16" y="176" font-size="11.5" font-weight="700" fill="currentColor">第 2 次调用</text>
+        <rect x="16" y="188" width="240" height="34" rx="6" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/>
+        <text x="136" y="210" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">chunk = "llo\n\n", buffer = "data: he"</text>
+        <line x1="262" y1="205" x2="302" y2="205" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah4)"/>
+        <rect x="310" y="188" width="150" height="34" rx="6" fill="currentColor" opacity="0.08"/>
+        <text x="385" y="210" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">先拼起来再切</text>
+        <line x1="466" y1="205" x2="506" y2="205" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah4)"/>
+        <text x="516" y="198" font-size="11" font-family="monospace" fill="currentColor">events = [{ event:'message',</text>
+        <text x="516" y="218" font-size="11" font-family="monospace" fill="currentColor">　　　　　　　　　data:'hello' }]</text>
+      </svg>
+      <figcaption>
+        第一次「什么都切不出来」<strong>不是失败</strong>，是正常状态 ——
+        半条事件本来就切不出事件。这就是为什么 <code>events</code> 是数组而不是单个事件。
+      </figcaption>
+    </figure>
+
+    <p class="prose" style="margin-top:24px">
+      这个形状有个直接好处：<strong>它是纯函数</strong> —— 没有 <code>this</code>、不碰网络、不写输出。
+      于是 12 个测试全部是「喂一个字符串、断言一个对象」，不需要造假的可读流。
+      这是设计上的取舍，不是偶然：注释里写得很清楚，这么做的目的就是<strong>让最容易出错的逻辑可测</strong>。
+    </p>
+  </section>
+
+  <!-- ─────────── 5. 走一遍代码 ─────────── -->
+  <section>
+    <div class="eyebrow">第五步</div>
+    <h2>82 行，四步走完</h2>
+    <p class="prose">
+      下面按执行顺序拆 <code>src/llm/sse.ts</code>。左边是行号，右边是实际代码。
+    </p>
+
+    <div class="flow">
+      <div class="step">
+        <div class="step-n">69</div>
+        <div>
+          <div class="step-what">先拼接，<strong>再</strong>规范化换行 —— 顺序不能反</div>
+          <code class="step-code">const text = (buffer ?? '') + chunk;</code>
+          <code class="step-code">const normalized = text.replace(/\r\n/g, '\n');</code>
+          <div class="step-where">sse.ts:66-69</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-n">71</div>
+        <div>
+          <div class="step-what">用空行切块；最后一段可能不完整，<code>pop()</code> 出来当残余</div>
+          <code class="step-code">const parts = normalized.split('\n\n');</code>
+          <code class="step-code">const rest = parts.pop() ?? '';</code>
+          <div class="step-where">sse.ts:71-73</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-n">76</div>
+        <div>
+          <div class="step-what">把切出来的每个完整块交给 <code>parseBlock</code>，没有 data 的返回 null 被丢掉</div>
+          <code class="step-code">for (const part of parts) { const parsed = parseBlock(part); if (parsed) events.push(parsed); }</code>
+          <div class="step-where">sse.ts:75-79</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-n">31</div>
+        <div>
+          <div class="step-what">块内逐行解析：跳注释、剥一个可选空格、按字段名分发</div>
+          <code class="step-code">for (const line of block.split('\n')) { … }</code>
+          <div class="step-where">sse.ts:27-54（parseBlock）</div>
+        </div>
+      </div>
+    </div>
+
+    <p class="prose" style="margin-top:24px">
+      注意第 1 步和第 2 步之间那条<strong>隐式约定</strong>：<code>split('\n\n')</code> 之后
+      「最后一段」一定是不完整的 —— 因为如果它以空行收尾，那么 <code>split</code> 的最后一个元素就是空串。
+      <code>pop()</code> 拿到的就是这个空串，于是 <code>rest</code> 自然是 <code>''</code>。一行代码同时处理了两种情况。
+    </p>
+  </section>
+
+  <!-- ─────────── 6. 三个坑 ─────────── -->
+  <section>
+    <div class="eyebrow">第六步</div>
+    <h2>三个最容易写错的地方</h2>
+    <p class="prose">
+      这三处都有专门的测试钉着。它们也是这份代码存在的全部难点 —— 除此之外都是平铺直叙。
+    </p>
+
+    <h3 class="h3-block">坑 ①　先规范化还是先拼接？</h3>
+    <p class="prose">
+      直觉写法是先把手上的残余清理干净、再拼新数据。那是错的。
+      因为残余的<strong>尾巴上可能挂着一个落单的 <code>\r</code></strong> ——
+      它到底是「一个独立的 <code>\r</code>」，还是「和下一块开头的 <code>\n</code> 配成一对」，
+      单看残余是<strong>判断不了</strong>的。
+    </p>
+
+    <div class="modes">
+      <div class="mode mode--bad">
+        <div class="mode-head">✗ 先规范化 buffer，再拼接</div>
+        <p class="mode-body">
+          残余 <code>"data: a\r"</code> 里的 <code>\r</code> 被<strong>单独</strong>规范化，
+          下一块开头的 <code>\n</code> 就再也配不上它。<br>
+          实测结果：事件条数不变，但 <code>\r</code> <strong>漏进了内容</strong> ——
+          <code>data</code> 拿到的是 <code>"a\r"</code> 而不是 <code>"a"</code>。
+        </p>
+      </div>
+      <div class="mode mode--ok">
+        <div class="mode-head">✓ 先拼接，再整体规范化</div>
+        <p class="mode-body">
+          拼成 <code>"data: a\r\n\r\n"</code> 之后，<code>\r\n</code> <strong>成对出现</strong>，
+          一次 <code>replace(/\r\n/g, '\n')</code> 就对了。落单的 <code>\r</code> 也留在 <code>rest</code> 里等下一次。
+        </p>
+      </div>
+    </div>
+
+    <div class="turn turn--a" style="margin-top:22px">
+      <div class="turn-head">
+        <span class="turn-title">实测：CRLF 被切在两次 read 之间</span>
+        <span class="turn-note">对应 sse.test.ts 第 30 行那条用例</span>
+      </div>
+      <div class="turn-body">
+        <div class="strip">
+          <span class="cell cell--a">parseSse("data: a\r")</span>
+          <span class="cell cell--sys">→ events=[]　rest="data: a\r"</span>
+        </div>
+        <div class="between">把 rest 原样传回去，再喂下一块</div>
+        <div class="strip">
+          <span class="cell cell--b">parseSse("\n\r\n", "data: a\r")</span>
+          <span class="cell cell--sys">→ events=[{ data: "a" }]　rest=""</span>
+        </div>
+        <div class="bracket">
+          <span class="tag tag--sys">尾部的 \r 必须留在 rest 里</span>
+          <span>因为在这个实现里，落单的 <code>\r</code> 就是<strong>普通字符</strong>（只有 <code>\r\n</code> 才是换行）。
+            若提前把它剥掉，它会从事件内容里<strong>静默消失</strong>：源字节 <code>data: a\rb\n\n</code> 切在
+            <code>\r</code> 与 <code>b</code> 之间时，<code>data</code> 会变成 <code>"ab"</code> 而不是 <code>"a\rb"</code></span>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="h3-block">坑 ②　空行才是边界，单个换行不是</h3>
+    <p class="prose">
+      <code>data:</code> 可以出现多行，它们属于<strong>同一条</strong>事件。所以判断边界必须是
+      <code>\n\n</code>（空行），不能是 <code>\n</code>。
+    </p>
+
+    <div class="turn" style="margin-top:18px">
+      <div class="turn-head">
+        <span class="turn-title">实测对比</span>
+      </div>
+      <div class="turn-body">
+        <div class="strip">
+          <span class="cell">parseSse("data: 一\ndata: 二\n\n")</span>
+          <span class="cell cell--a">→ 1 条事件，data = "一\n二"</span>
+        </div>
+        <div class="strip" style="margin-top:8px">
+          <span class="cell">parseSse("data: a\n")</span>
+          <span class="cell cell--sys">→ 0 条事件，rest = "data: a\n"</span>
+          <span class="cell cell--cut">只有一个换行 = 还没结束</span>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="h3-block">坑 ③　切不动的时候，要原样留存而不是报错</h3>
+    <p class="prose">
+      「半条事件」是常态而非异常。如果代码在切不出事件时报错或丢弃，
+      只要网络把事件切开一次，<strong>那半条数据就永久丢了</strong>。
+      正确的做法是把它放回 <code>rest</code>，等下一位。
+    </p>
+  </section>
+
+  <!-- ─────────── 7. 协议纯度 ─────────── -->
+  <section>
+    <div class="eyebrow">第七步</div>
+    <h2>它故意「不懂」DeepSeek</h2>
+    <p class="prose">
+      <code>sse.ts</code> 里<strong>没有一个</strong> DeepSeek 或 OpenAI 的字段名 ——
+      没有 <code>choices</code>、没有 <code>delta</code>、没有 <code>reasoning_content</code>。
+      连 <code>[DONE]</code> 它都不认识。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 760 210" role="img" aria-label="分帧层只认识 SSE 协议，data 里装什么它不管；[DONE] 和 JSON 字段名由下一层解释">
+        <defs>
+          <marker id="ah5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <rect x="16" y="46" width="200" height="110" rx="9" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.6"/>
+        <text x="116" y="74" text-anchor="middle" font-size="12.5" font-weight="700" fill="currentColor">sse.ts</text>
+        <text x="116" y="98" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.72">只认识 SSE 的语法</text>
+        <text x="116" y="120" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">{ event, data }</text>
+        <text x="116" y="142" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.72">data 里装什么，它不管</text>
+
+        <line x1="224" y1="101" x2="292" y2="101" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah5)"/>
+        <text x="258" y="92" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.75">原样转交</text>
+
+        <rect x="300" y="46" width="212" height="110" rx="9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" opacity="0.6"/>
+        <text x="406" y="74" text-anchor="middle" font-size="12.5" font-weight="700" fill="currentColor">deepseek.ts</text>
+        <text x="406" y="98" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.72">认识 [DONE] 与 JSON</text>
+        <text x="406" y="120" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">JSON.parse(data)</text>
+        <text x="406" y="142" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.72">翻译成 StreamEvent</text>
+
+        <line x1="520" y1="101" x2="588" y2="101" stroke="currentColor" stroke-width="1.6" marker-end="url(#ah5)"/>
+        <text x="660" y="86" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">text-delta</text>
+        <text x="660" y="106" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">reasoning-delta</text>
+        <text x="660" y="126" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">done</text>
+
+        <text x="16" y="188" font-size="11" fill="currentColor" opacity="0.72">
+          好处：sse.ts 的测试完全不需要知道 DeepSeek 长什么样 —— 它测的是协议，不是厂商
+        </text>
+      </svg>
+      <figcaption>
+        这也是为什么 <code>data: [DONE]</code> 在 <code>sse.ts</code> 里只是一条普通事件，
+        它的「结束」含义由 <code>deepseek.ts</code> 解释。测试里专门有一条钉着这个边界。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ─────────── 8. 怎么验证 ─────────── -->
+  <section>
+    <div class="eyebrow">第八步</div>
+    <h2>怎么确认自己看懂了</h2>
+    <p class="prose">
+      12 条测试全部是「喂字符串、断言对象」的形式，所以你可以直接改一行代码看哪条变红 ——
+      这是理解这份代码最快的路径。
+    </p>
+
+    <table class="files">
+      <thead>
+        <tr><th>想验证什么</th><th>怎么改坏它</th><th>哪条会红（实测）</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>先拼接后规范化</td>
+          <td>把 <code>buffer + chunk</code> 改成分别规范化</td>
+          <td>「\r\n 等价且被切在两次 chunk 之间能拼回」</td>
+        </tr>
+        <tr>
+          <td>rest 必须回灌</td>
+          <td>调用时把 <code>buffer</code> 传 <code>''</code>（或不传）</td>
+          <td>「一条事件被切成两次 chunk」（<code>hello</code> 根本不会出现）</td>
+        </tr>
+        <tr>
+          <td>空行才是边界</td>
+          <td><code>split('\n\n')</code> 改成 <code>split('\n')</code></td>
+          <td>「多行 data 用 \n 拼接」<strong>与</strong>「event: 作为事件名」（2 条）</td>
+        </tr>
+        <tr>
+          <td>没有 data 不产出事件</td>
+          <td>去掉 <code>if (dataLines.length === 0)</code> 那个判断</td>
+          <td>「注释行被忽略」<strong>与</strong>「没有 data 的块不产出事件」<strong>与</strong>「空输入与连续空行不崩」（3 条）</td>
+        </tr>
+        <tr>
+          <td>可选空格只剥一个</td>
+          <td>把 <code>slice(1)</code> 换成 <code>trimStart()</code></td>
+          <td>「data: 后可选空格被剥、多余空格保留」</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="prose" style="margin-top:14px; font-size:.9rem; color:var(--ink-soft)">
+      上表五行的结果都是<strong>真跑出来的</strong>，不是推测 —— 每一条都做过一次「改坏 → 看哪条变红 → 还原」。
+      顺带说明为什么值得这么试：它同时告诉你<strong>哪些行为被测试锁住了</strong>，
+      以及<strong>改坏一处会牵连几条</strong>。
+    </p>
+
+    <div class="runbox">
+      <span class="prompt">$</span>
+      <span class="cmd">node --import ./loader.mjs --test test/sse.test.ts</span>
+    </div>
+    <p class="prose" style="margin-top:14px; font-size:.9rem; color:var(--ink-soft)">
+      单文件跑测试<strong>必须带 <code>--import ./loader.mjs</code></strong> ——
+      测试文件用 <code>@/</code> 别名导入源码，而 Node 的原生类型擦除不读 tsconfig 的 <code>paths</code>。
+      少了它，整个文件会失败在 <code>ENOENT</code>，而不是报告某条用例失败。
+    </p>
+  </section>
+
+  <!-- ─────────── 9. 卡住的地方 ─────────── -->
+  <section>
+    <div class="eyebrow">最后</div>
+    <h2>几个容易卡住的点</h2>
+
+    <div class="qa">
+      <div class="qa-item">
+        <div class="qa-q">为什么要缓冲区，不能读到就解析吗？</div>
+        <p class="qa-a">
+          因为一次 <code>read()</code> 的边界和事件边界无关。
+          读到就解析的话，只要事件被切开一次就会解析失败。
+          缓冲区保存的正是「已经到达、但还构不成一条完整事件」的那部分。
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <div class="qa-q">为什么是纯函数，不做成有状态的类？</div>
+        <p class="qa-a">
+          纯函数可以用「喂字符串、断言字符串」测穿，不必构造假的可读流。
+          换来的代价是调用方要负责保管 <code>rest</code> —— 但这个项目里只有一处调用点。
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <div class="qa-q">中文乱码是分帧的 bug 吗？</div>
+        <p class="qa-a">
+          不是。<code>sse.ts</code> 只处理字符串，它<strong>看不到字节</strong>。
+          乱码发生在它上游 —— <code>TextDecoder</code> 必须带 <code>{ stream: true }</code>，
+          否则被切开的多字节字符会变成不可逆的替换字符。
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <div class="qa-q"><code>rest</code> 会不会无限增长？</div>
+        <p class="qa-a">
+          正常不会 —— 每次 <code>read()</code> 都会尝试切块，切出来的立刻变成事件。
+          但如果上游一直发数据却<strong>永远不发空行</strong>，它确实会一直涨。
+          这属于「错误处理」，记在待办里，不在这一版解决。
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <div class="qa-q">为什么不用现成的 SSE 库？</div>
+        <p class="qa-a">
+          这是学习项目，本项目的硬约束是<strong>零运行时依赖</strong>，
+          目的是亲手走通协议这一层。而且这段代码只有 82 行、12 条测试，
+          维护成本比引入依赖更低。
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <div class="qa-q">为什么要单独一个文件，不写在 deepseek.ts 里？</div>
+        <p class="qa-a">
+          为了保住「纯函数可测」这个性质。<code>deepseek.ts</code> 里全都是
+          <code>fetch</code>、<code>reader</code>、超时计时器这些 IO；
+          混进分帧逻辑后，测分帧就不得不碰网络。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      事实来源：<code>src/llm/sse.ts</code>（82 行）、<code>test/sse.test.ts</code>（12 条用例）。
+      本页引用的所有输出均为实测，不是示意。
+    </p>
+    <p>
+      相关：<a href="how-conversation-works.html">多轮对话是怎么工作的</a> ·
+      <code>DECISIONS.md</code> 的 D18（纯函数 + 显式残余缓冲）、D19（解码在调用方、分帧在字符串层） ·
+      <code>docs/troubleshooting.md</code> 的 T10（两种「找不到模块」的形状）
+    </p>
+  </footer>
+
+</div>
+
+</body>
+</html>
