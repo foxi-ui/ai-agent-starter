@@ -58,8 +58,15 @@ export class Session {
     if (systemPrompt !== '') {
       messages.push({ role: 'system', content: systemPrompt });
     }
-    // 用 concat 生成新数组返回，避免把内部数组的引用暴露出去，
-    // 防止调用方在无意中改到这个 Session 的内部状态
+    // 用 concat 生成新数组返回，保证「返回的不是内部那个数组」，
+    // 免得调用方 push/splice 改到会话状态。
+    //
+    // 注意它**不保证元素隔离** —— concat 与 slice 一样只复制外层数组，
+    // 里面的 Message 对象仍是共享的。这是刻意的，别顺手改成深拷贝：
+    // 这个方法每轮请求都跑，结果直送 JSON.stringify（见 llm/deepseek.ts），
+    // 全链路上没有任何改动方，深拷贝只会为每轮多分配 N 个小对象。
+    // 与 history() 的处置不同是**刻意分开**的，不是漏改：那边有 spec 明文
+    // 要求「外部改不动内部状态」，且在用户手敲 /history 才触发的冷路径上。
     return messages.concat(this.messages);
   }
 
@@ -86,12 +93,19 @@ export class Session {
   }
 
   /**
-   * 返回消息列表的**副本**。
+   * 返回消息列表的**副本**，外部改不动内部状态。
    *
-   * 返回副本而不是内部数组的引用：`/history` 的渲染只需要读，
-   * 让它拿到引用就等于开了一个「顺手改到会话状态」的口子。
+   * 这里要的是**深**拷贝而不是 `slice()`：slice 只换掉外层数组，
+   * 元素仍是内部那些对象，调用方一句 `snapshot[0].content = 'x'`
+   * 就穿透进来改了会话状态。spec 写的契约是「外部改不动内部状态」，
+   * 所以元素也必须是新的。
+   *
+   * `{ ...message }` 在这里是**完备**的深拷贝、不是半吊子加固：
+   * `Message` 是扁平结构（role / content 都是原始类型），没有嵌套对象
+   * 或数组需要递归复制。将来若给 Message 加了嵌套字段，这一行必须
+   * 同步升级成真正的深拷贝。
    */
   history(): Message[] {
-    return this.messages.slice();
+    return this.messages.map((message) => ({ ...message }));
   }
 }

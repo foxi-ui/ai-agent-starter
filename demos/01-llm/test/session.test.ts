@@ -55,4 +55,20 @@ test('history 返回副本，改它不影响会话内部', () => {
 
   snapshot.push({ role: 'user', content: '偷偷加的' });
   assert.equal(s.history().length, 1);
+
+  // 每次调用都要拿到**新的**数组。上面的 push 断言挡不住「缓存一个数组复用」
+  // 这种优化 —— 那种实现下 push 会污染缓存，但长度断言仍可能侥幸成立。
+  assert.notEqual(s.history(), s.history());
+});
+
+test('history 的元素也是新的，改元素碰不到会话内部', () => {
+  const s = new Session('deepseek-flash');
+  s.append('user', 'a');
+
+  // 只换掉数组是不够的：数组新、元素共享时，改元素照样穿透到会话状态。
+  // spec 对 history() 的契约是「外部改不动内部状态」，所以这里钉元素隔离。
+  const snapshot = s.history();
+  snapshot[0].content = '改过的';
+
+  assert.equal(s.history()[0].content, 'a');
 });
