@@ -19,7 +19,7 @@ M2b  命令层：commands.ts → Session 扩展 → repl 接入
 
 M1 走通了「LLM API → 消息结构 → 上下文管理」。M2 补两件事：
 
-1. **streaming**：把「一次 fetch 等完整回答」变成「逐字到达」。这是阶段 0 验收的六条之一（`docs/00-guides.md` 第二十六节），也是 M1 明确推迟的部分。
+1. **streaming**：把「一次 fetch 等完整回答」变成「逐字到达」。这是阶段 0 验收的六条之一（见 `docs/ROADMAP.md` 的「阶段验收标准」），也是 M1 明确推迟的部分。
 2. **三个命令**：`/clear` `/model` `/history`，让会话在进程内可控。
 
 成功标准（本次范围）：

@@ -8,8 +8,8 @@
 个人 AI Agent 学习路线的实践仓库。每个阶段一个目录，产出一个可运行的项目 + 一套工程资产。
 
 ```text
-docs/00-guides.md      路线图、阶段验收标准 —— 一切的事实来源
-README.md              阶段目录映射表（哪个阶段在哪个目录、什么状态）
+docs/ROADMAP.md        路线图、阶段验收标准 —— 一切的事实来源
+README.md              阶段目录与实时状态（谁在哪个目录、做到哪了）
 demos/<阶段>/          各阶段项目
 ```
 
@@ -18,7 +18,7 @@ demos/<阶段>/          各阶段项目
 | 你要做的事 | 先读 |
 | --- | --- |
 | 知道现在做到哪了、下一步是什么 | 根 `README.md` 的「阶段目录」表 |
-| 知道这个阶段的验收标准 | `docs/00-guides.md` 第二十六节 + 该项目 `EVALUATION.md` |
+| 知道这个阶段的验收标准 | `docs/ROADMAP.md` 的「阶段验收标准」+ 该项目 `EVALUATION.md` |
 | 改某个阶段的代码 | 该项目的 `README.md` + `ARCHITECTURE.md` + `DECISIONS.md` |
 | 遇到报错 | 该项目 `docs/troubleshooting.md` |
 | 新起一个阶段 | 本文件 + 上一个阶段的 `DECISIONS.md`（看哪些决策该继承） |

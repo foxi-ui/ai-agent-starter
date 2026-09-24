@@ -8,7 +8,7 @@
 
 ## 1. 背景与目标
 
-`ai-chat` 是学习路线（`docs/00-guides.md` 阶段 0 · 实践项目 1）的第一个项目。
+`ai-chat` 是学习路线（`docs/ROADMAP.md` 阶段 0 · 项目 1：AI Chat）的第一个项目。
 
 目标：在 CLI 模式下实现一个 AI 对话工具，**不使用 LangChain，直接调用 DeepSeek 模型 API**，亲手走通「LLM API → 消息结构 → 上下文管理」这条链路的起点。
 
