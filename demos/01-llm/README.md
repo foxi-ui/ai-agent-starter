@@ -152,6 +152,7 @@ AI: ...
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 项目由什么组成？模块如何依赖？ |
 | [`HOW-IT-WORKS.md`](HOW-IT-WORKS.md) | 一轮对话实际发生了什么？ |
 | [`DECISIONS.md`](DECISIONS.md) | 为什么这样设计？ |
+| [`docs/troubleshooting.md`](docs/troubleshooting.md) | 报这个错怎么办？怎么避免再犯？ |
 | [`docs/00-index.md`](docs/00-index.md) | 原始需求 |
 | [`docs/01-full-design.md`](docs/01-full-design.md) | 完整功能蓝图 |
 | [`docs/superpowers/specs/`](docs/superpowers/specs/) | 本次增量的设计 spec |
