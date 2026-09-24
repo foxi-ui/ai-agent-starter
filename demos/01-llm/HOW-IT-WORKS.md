@@ -13,17 +13,16 @@ readline 读到一行
   ├─ session.append('user', question)
   │
   ├─ messages = session.toMessages(SYSTEM_PROMPT)
-  │       → [ {role:'system'}, ...历史消息 ]
   │
-  ├─ client.chat(messages)
+  ├─ client.chatStream(messages, { model: session.model })
   │       → POST {baseUrl}/chat/completions
-  │         body: { model, messages }
-  │       → 取 choices[0].message.content
+  │         body: { model, messages, stream: true }
+  │       → 逐块 read → TextDecoder(stream) → parseSse 分帧 → 归一化成 StreamEvent
   │
-  ├─ 成功：session.append('assistant', content) → 打印 `AI: ` + content 到 stdout
+  ├─ 成功：text 累积 → session.append('assistant', text)
   └─ 失败：打印 [error] ... 到 stderr → 不 append（上下文保持干净）
   │
-  └─ 回到读下一行，直到输入流关闭
+  └─ renderer.finish() 保证收尾换行（正常与异常都调用）
 ```
 
 ## 逐步说明
@@ -185,6 +184,14 @@ AI: ...
 
 可以看到失败的 `user(fail)` 保留在历史中（用户确实说过），但对应的
 `assistant` 缺失——**不会伪造一条空回答**。
+
+## 流式：屏幕上看到的 ≠ 模型记得的
+
+流式输出会**边收边打印**，所以中途失败时屏幕上会留下半截回答。但那半截
+**不会**进入 `Session` —— `session.append('assistant', …)` 只在流正常结束后执行。
+
+后果：下一轮模型看不到那半截内容。你看到的和它记得的是两回事，
+这不是 bug，是「失败轮次不写上下文」这条规则的必然结果（见 D7）。
 
 ## 验证方式
 

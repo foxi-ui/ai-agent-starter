@@ -3,7 +3,7 @@
 > 回答：遇到这个报错时怎么定位、怎么修、怎么避免再犯。
 > 只记**实际踩过或已确认会踩**的坑，每条都写明来源（实测 / 记录在案）。
 
-**T1–T5 是本项目自身的坑，T6–T8 是附带的（不是本项目的代码问题，但会在本项目的工作中遇到）。**
+**T1–T5 是本项目自身的坑，T6–T12 是附带的（不是本项目的代码问题，但会在本项目的工作中遇到）。**
 
 ---
 
@@ -381,3 +381,190 @@ bash -c 'FILES="..."; for f in $FILES; do ...; done'
 - 批量替换前先 `git status` 确认工作区干净，这样即使改错也能一眼看出
 
 来源：实测（2026-09-24 批量同步阶段目录引用时踩到）。
+
+---
+
+## T9（附）往 `test/` 下放辅助文件，用例数被静默撑大
+
+**症状**
+
+放一个 `test/helpers.ts`（或 `test/support/xxx.ts`）进去，跑 `pnpm test` 发现用例数
+凭空多了几个，且多出来的"用例"名字就是文件名：
+
+```console
+ok 3 - test/helper-probe.ts
+ok 7 - test/support/helper.ts
+# tests 18
+```
+
+**原因**
+
+`pnpm test` 用的是裸 `node --test`（不带路径参数），它的默认发现规则会匹配
+**`test/` 目录下的任何文件**，不只是 `*.test.ts`。一个只有导出的辅助文件照样被
+当成一个"测试文件"载入，载入成功就算通过。
+
+**解决**
+
+不要在 `test/` 下放非 `*.test.ts` 的文件。各测试文件自带局部辅助即可。
+
+**验证**
+
+`pnpm test` 的 `# tests` 数量应等于各 `*.test.ts` 里 `test(` 的数量之和。
+
+**避免**
+
+如果确实需要共享的测试辅助，把 `test` 脚本改成显式 glob
+（`node --test 'test/**/*.test.ts'`）再说 —— 但本项目的测试大多是纯函数测试，
+只有 `repl.test.ts` 需要 fake client，没必要为此引入共享文件。
+
+来源：实测（2026-09-24 写 M2 计划时探测到）。
+
+---
+
+## T10（附）`@/` 别名找不到模块时，报错形状取决于 loader 在不在
+
+**症状**
+
+同样是「`@/` 指向的模块不存在」，报错完全不同：
+
+```console
+# 情形 A：漏了 --import ./loader.mjs
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@/cli' imported from .../test/repl.test.ts
+
+# 情形 B：带了 loader，但目标文件不存在
+Error: ENOENT: no such file or directory, open
+       '/Users/.../demos/01-llm/src/llm/__does_not_exist.ts'
+  code: 'ENOENT'
+```
+
+**原因**
+
+`loader-hooks.mjs` 的 `resolve` 钩子把 `@/x` 映射成**绝对 file URL** 并 `shortCircuit`：
+
+- **带 loader**：解析阶段成功（映射出的 URL 语法有效），失败点后移到 **load 阶段**，
+  于是报 `ENOENT` + 绝对路径 —— 报错里能看到 `src/` 的真实路径。
+- **不带 loader**：`@/cli` 被当成**裸包名**去做 node_modules 解析，于是报
+  `Cannot find package`。
+
+**定位**
+
+看报错里有没有绝对路径：
+
+- 有 → 情形 B，**别名机制是好的**，缺的是那个文件（检查路径拼写、文件名）
+- 没有、且说的是 `package '@/'` → 情形 A，检查命令有没有带 `--import ./loader.mjs`
+
+**避免**
+
+写「预期会失败」的测试期望时，先确认是哪种情形 —— 这两种报错长得很像，但根因完全不同。
+
+来源：实测（2026-09-24 M2a Task 2 实施时，实现者按 brief 的期望去核对，发现期望写的是情形 A、
+实际发生的是情形 B）。
+
+---
+
+## T11（附）TypeScript 参数属性：`tsc` 放行，运行时直接 `SyntaxError`
+
+**症状**
+
+```console
+$ node --import ./loader.mjs src/index.ts
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]:
+TypeScript parameter property is not supported in strip-only mode
+  code: 'ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX'
+```
+
+而 **`pnpm run typecheck` 报 exit 0** —— 类型检查完全放行。
+
+**原因**
+
+参数属性（constructor 参数上加 `private` / `public` / `readonly`）：
+
+```ts
+class Session {
+  constructor(private currentModel: string) {}   // ← 这行会炸
+}
+```
+
+它在 TypeScript 里需要**代码变换**（编译器要额外生成 `this.currentModel = currentModel`），
+而本项目的硬约束是「Node 原生类型擦除、**不引入构建步骤**」，剥离器只做**擦除**不做变换，
+所以遇到这个语法直接报 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。
+
+**这是本仓库最容易漏的一类坑**：`tsc` 认为它完全合法（它对），Node 认为它不受支持（它对），
+两边都不报错，只有真正运行时才炸。
+
+**解决**
+
+写成显式字段 + 构造函数里赋值，语义完全等价：
+
+```ts
+class Session {
+  private currentModel: string;
+
+  constructor(model: string) {
+    this.currentModel = model;
+  }
+}
+```
+
+**验证**
+
+`node --import ./loader.mjs src/index.ts` 能起来（不是只看 `tsc --noEmit`）。
+
+**避免**
+
+- **本仓库一律不用参数属性**，即使 `tsc` 说没问题
+- 同类语法还有 `enum`、`namespace`、实验性装饰器 —— 凡是需要**变换**而非**擦除**的 TS 特性都不能用
+- **判断标准**：把 `.ts` 里的类型标注全删掉，代码是否仍是合法 JS？是 → 能擦除；否 → 需要变换，不能用
+- **永远不要只凭 `tsc --noEmit` 通过就认为能跑** —— 类型检查与运行时是两套规则
+
+来源：实测（2026-09-24 M2a Task 3 实施时踩到：实施者按计划逐字写的 `Session` 构造函数
+在 Node 上跑不起来，改为显式赋值后通过）。同类问题见 T4。
+
+---
+
+## T12（附）双引号里的反引号被当成命令替换，内容无声地少一截
+
+**症状**
+
+```console
+$ git commit -m "修正注释：实测 stdout 以 \`You: \` 结尾"
+(eval):25: command not found: You:
+```
+
+**命令没有失败** —— 提交照样成功，只是信息变成了「实测 stdout 以  结尾」：
+反引号里那截被当命令跑掉、输出为空，于是**写进去的内容缺了一块**。
+
+**原因**
+
+POSIX shell 的规则：**双引号内**，反引号与 `$(...)` 仍然会做命令替换。
+`` `You: ` `` 被当命令去执行，命令不存在 → 报错进 stderr，**替换结果为空串** → 内容被吞。
+
+**危险之处**：那句 `command not found` 看起来像无关噪声，而**操作本身是成功的**。
+不回读结果的人会以为一切正常，实际内容已经缺了一块 —— 静默的错误数据比响亮的失败坏得多。
+
+**解决**
+
+写入文案时用**引号包裹的 heredoc**（内部一律不求值），或用单引号：
+
+```bash
+# 推荐
+some-command -F - <<'MSG'
+...这里可以随便用 \`反引号\` 和 $变量 和 !...
+MSG
+
+# 或单引号（内容本身不能含单引号）
+git commit -m '以 \`You: \` 结尾'
+```
+
+**验证**
+
+写完**回读一遍**：`git log -1 --format=%B`。凡是写入内容里含反引号 / `$` / `!` 的操作，都要回读确认。
+
+**避免**
+
+- 要写入文案时，**不要用双引号 `-m`**，用 `<<'EOF'` heredoc
+- 记住：**双引号里只有 `$`、反引号、`\`、`!` 有特殊含义**，其余都是字面量 ——
+  而这四个恰恰都是会咬人的
+- 与 T8 同族：都是「shell 把你要的字面量当成了语法」
+
+来源：实测（2026-09-24 写 M2b 计划补充时踩到，提交信息被吞掉一截后回读才发现）。

@@ -97,7 +97,7 @@ AI: ...
 | 命令 | 作用 |
 | --- | --- |
 | `pnpm start` | 启动 REPL |
-| `pnpm test` | 运行全部测试（`node --test`，当前 16 个用例） |
+| `pnpm test` | 运行全部测试（`node --test`，当前 61 个用例） |
 | `pnpm run typecheck` | 类型检查（`tsc --noEmit`） |
 
 命令的事实来源是 `package.json` 的 `scripts` 字段。
@@ -116,10 +116,12 @@ AI: ...
     index.ts            # 入口：解析配置 → 启动 REPL
     cli/config.ts       # 环境变量 → Config
     cli/repl.ts         # readline 主循环 + 打印
-    core/types.ts       # Message / Role / ChatResult 类型
+    cli/render.ts       # StreamEvent → stdout/stderr
+    core/types.ts       # Message / Role / ChatResult / StreamEvent / ChatOptions 类型
     core/session.ts     # 会话：消息数组、append、toMessages
     llm/client.ts       # LLMClient 接口（测试替身的接缝）
     llm/deepseek.ts     # DeepSeek adapter：非流式调用 + 响应解析
+    llm/sse.ts          # SSE 分帧（纯函数）
   test/
     session.test.ts
     deepseek.test.ts
@@ -132,14 +134,14 @@ AI: ...
 
 **已实现**
 
-- 非流式多轮对话，上下文在进程内存中累积
+- 非流式多轮对话 + **流式（SSE）逐字输出**，上下文在进程内存中累积
+- 思考过程默认不展开，仅在 stderr 给一行 `[思考中…]` 指示
 - `system` / `user` / `assistant` 三种 role 的消息组装
 - 最小错误处理：API 报错打印到 **stderr** 后继续循环，不崩溃、不污染上下文；
   模型回答走 stdout，两条流互不干扰（`pnpm start > answers.txt` 只拿到回答）
 
 **尚未实现（后续增量）**
 
-- streaming（SSE 解析）
 - 命令：`/clear` `/history` `/model` `/usage`
 - 会话持久化（JSONL 落盘、`--resume`）
 - token 统计 / 成本账本、上下文预算裁剪

@@ -14,7 +14,7 @@
 ```text
 TypeCheck: PASS  (tsc --noEmit 退出码 0)
 Lint:      N/A   (本仓库未配置 linter)
-Test:      PASS  (node --test 16/16，退出码 0)
+Test:      PASS  (node --test 61/61，退出码 0)
 Build:     N/A   (noEmit，Node 直接运行 .ts，无构建产物)
 ```
 
@@ -27,11 +27,11 @@ Build:     N/A   (noEmit，Node 直接运行 .ts，无构建产物)
 | 1 | 独立调用 LLM API | ✅ 达标 | M1 |
 | 2 | 管理上下文 | ✅ 达标 | M1 |
 | 3 | 处理 API 错误 | ⚠️ 部分达标 | M1 最小实现，M6 补全 |
-| 4 | 实现 Streaming | ❌ 未做 | M2 |
+| 4 | 实现 Streaming | ✅ 达标 | M2 |
 | 5 | 使用 Structured Output | ❌ 未做 | M5（2026-09-24 补入） |
 | 6 | 统计 Token / Cost | ❌ 未做 | M4 |
 
-**整体：2 项达标 / 1 项部分 / 3 项未做。**
+**整体：3 项达标 / 1 项部分 / 2 项未做。**
 
 M1（本次增量）自身的交付目标 —— **非流式多轮对话 + 最小错误处理** —— 已全部达成并验证。上表的 ❌ 属于后续增量，不是 M1 的欠账。
 
@@ -90,21 +90,28 @@ M1（本次增量）自身的交付目标 —— **非流式多轮对话 + 最�
 
 ---
 
-## 4. 实现 Streaming — ❌ 未做
+## 4. 实现 Streaming — ✅ 达标（M2a，2026-09-24）
 
-**现状**：一次 `fetch` 拿完整回答；`LLMClient.chat()` 返回 `Promise<ChatResult>`。
+**证据**
 
-**目标形态**：在 `chat()` 之外增加 `AsyncIterable<StreamEvent>`，事件为 `text-delta` / `reasoning-delta` / `usage` / `done`；REPL 侧 `for await` 消费。
+- `src/llm/sse.ts` 手写 SSE 分帧（纯函数），覆盖一次多事件、事件跨两次 read、
+  注释行、多行 data、`\r\n` 跨块、`[DONE]`、半条事件残留 —— 见 `test/sse.test.ts`
+- `src/llm/deepseek.ts` 的 `chatStream()` 把 chunk 归一化成 `StreamEvent`；
+  `test/deepseek.test.ts` 覆盖事件序列、末 chunk 的 `finish_reason`、`[DONE]` 兜底、
+  非 2xx、空闲超时、坏 JSON 跳过、**多字节字符被切在两次 read 之间不乱码**
+- `src/cli/render.ts` 把事件渲染到 stdout/stderr；`test/render.test.ts` 覆盖分流规则
 
-**实施前必须过的 5 条硬约束**（已核实，见 `01-full-design.md` §6）
+**五条硬约束的落实**（`01-full-design.md` §6）
 
-1. `stream: true` **必须同时带 `stream_options`**，否则返回 400
-2. `usage` **只在最后一个 chunk** 出现，且官方明确**不产生单独的 usage-only chunk** → 中断生成时拿不到 usage
-3. SSE 必须**按字节流缓冲解析**：一次 `read()` 可能含多条事件，一条事件可能被 TCP 切成两次 `read()`。解析器要维护残余缓冲、遇空行 dispatch、忽略 `:` 开头的注释行（keep-alive）
-4. thinking 默认开启，`delta.reasoning_content` 与 `delta.content` 是**两条独立通道**交替到达
-5. thinking 模式下 `temperature` **无效**（默认不传）
+| 约束 | 落实 |
+| --- | --- |
+| ~~`stream: true` 必须带 `stream_options`~~ | **该约束不成立**，官方文档写反了，已于 2026-09-24 更正 |
+| `usage` 只在末 chunk、无 usage-only chunk | 已核实；M2 不消费，末 chunk 的 `usage` 被忽略 |
+| SSE 必须按字节流缓冲解析 | `TextDecoder({stream:true})` + 纯函数分帧；分片与多字节切分都有测试 |
+| thinking 是两条独立通道 | `reasoning-delta` 与 `text-delta` 分别归一化，渲染器只显示指示 |
+| thinking 下 `temperature` 无效 | 不传 `temperature`，天然满足 |
 
-**落点**：M2
+**未做（属 M4）**：`--show-reasoning` 展开思考全文、`--no-thinking`
 
 ---
 

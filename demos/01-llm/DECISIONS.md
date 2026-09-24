@@ -282,3 +282,102 @@ AI: ...
 **最后一次提示符必然已经写出去**（`pnpm start < q.txt` 的输出以 `You: ` 结尾）。
 文档没有规定退出时的行为，本次选择接受。若不想要，可给 `ReplOptions` 加一个 `showPrompt`
 开关、由 `input.isTTY` 决定 —— 那会让输出变成模式相关的，本次不做。
+
+---
+
+## D16. `chatStream()` 与 `chat()` 并存，各自独立实现
+
+**决策**：`LLMClient` 增加 `chatStream()`，`chat()` 保留为独立的非流式实现。
+
+**理由**
+
+- 这是学习项目。「非流式」与「流式」两条 wire 路径对照着看，正是阶段 0 要学的东西。
+- 把 `chat()` 改成在 `chatStream()` 之上收集事件虽然只有一条路径，但会作废
+  `deepseek.test.ts` 现有 6 个用例（它们喂的是 JSON 响应，不是 SSE）。
+
+**代价**：`deepseek.ts` 里有两个请求构造点（各 2–3 个键，差异只有一个 `stream: true`）。
+**特意不抽 `buildBody()`** —— 为这点差异抽 helper 会让「这次到底发了什么」变得不直观。
+
+---
+
+## D17. per-call `options` 携带模型，「当前模型」存在 `Session`
+
+**决策**：`chat(messages, options?)` / `chatStream(messages, options?)`，
+`options.model`；`Session` 增加 `model` getter/setter。
+
+**理由**：`/model` 需要在会话中途切换模型，而原实现把 `config.model` 闭包捕获在
+`createDeepSeekClient()` 里，模型在构造时就烧死了。
+
+**为什么参数位迟早要有**：M4 的 `--no-thinking` 同样是 per-call 参数 ——
+thinking 开关不是 client 的身份，是这一轮的属性。
+
+**放弃**：repl 持 factory 切换时重建 client（要改 `runRepl` 签名与 4 个测试）；
+client 加可变 `setModel()`（接口有状态，多会话共享会互相污染）。
+
+---
+
+## D18. `StreamEvent` 只吐三种，`usage` 推迟到 M4
+
+**决策**：M2 只产出 `text-delta` / `reasoning-delta` / `done`。
+
+**理由**：`done` 必须现在有 —— `finish_reason === 'length'` 表示回答被截断，要告诉用户。
+`usage` 现在解析了没有消费者，还要连带定义 `TokenUsage` 及其测试。
+
+**代价**：M4 要在 `StreamEvent` 联合里加第 4 个成员。可接受。
+
+---
+
+## D19. SSE 解析是纯函数 + 显式残余缓冲
+
+**决策**：`parseSse(chunk, buffer?) → { events, rest }`，无状态。
+
+**理由**：分帧是 M2 最容易错的地方（一条事件可能被 TCP 切成两次 `read()`，
+一次 `read()` 可能含多条事件）。纯函数才能用「喂字符串、断言字符串」测透，
+而不必构造假的可读流。
+
+**放弃**：有状态类（跨分片测试更绕，且引入可变状态）；
+async generator 直接吃字节流（把分帧与读流揉在一起，正好把最难测的部分藏进 IO）。
+
+**关键实现细节**：必须**先 `buffer + chunk` 拼接、后**把 `\r\n` 规范化成 `\n`。
+反过来做的话，`buffer` 尾部一个落单的 `\r` 无法判断是否与下一块的 `\n` 成对。
+
+---
+
+## D20. `TextDecoder({ stream: true })` 在调用方解码，分帧在字符串层
+
+**决策**：`deepseek.ts` 用 `new TextDecoder()` 配合 `decode(chunk, { stream: true })`
+逐块解码，`sse.ts` 只处理字符串。
+
+**理由**：SSE 按字节到达，一个中文 3 字节，很可能被 TCP 切在字符中间。
+把跨块多字节序列的处理交给 `TextDecoder`，分帧逻辑就不必关心字节。
+
+---
+
+## D21. 一个 30s 的流空闲超时，不加开关
+
+**决策**：`deepseek.ts` 内部一个每收到 chunk 就重置的计时器，常量 30s，
+超时主动断开连接并抛普通 `Error`。
+
+**理由**：非流式卡住是「整个请求没响应」，用户明确知道在等；流式已经打印了
+半句话然后停住，**用户无法区分「模型在想」和「连接死了」**。
+
+**实现观察**：流式下「首字节超时」就是「第一个 chunk 之前的空闲超时」——
+同一个计时器覆盖两种情形。
+
+**为什么不用单一总时长**：长回答会被误杀（`01-full-design.md` §6）。
+`--timeout` 开关属于 M6。
+
+---
+
+## D22. 思考过程走 stderr 一行指示
+
+**决策**：首个 `reasoning-delta` 到达时往 stderr 写一行 `[思考中…]`，此后不再输出；
+思考内容本身不打印。
+
+**理由**
+
+- 思考可能持续十几秒。这期间若一片死寂，流式解决的「等待没反馈」只解决了一半。
+- 思考通常比答案长得多，打印出来会淹没答案（展开全文是 M4 的 `--show-reasoning`）。
+- 走 stderr 而不是 stdout：stdout 只承载模型回答（D13）。
+
+**副产品（好的）**：**不需要 TTY 检测**。两条流天然分流，管道与重定向都不会被污染。
