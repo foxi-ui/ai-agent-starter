@@ -97,7 +97,7 @@ AI: ...
 | 命令 | 作用 |
 | --- | --- |
 | `pnpm start` | 启动 REPL |
-| `pnpm test` | 运行全部测试（`node --test`，当前 88 个用例） |
+| `pnpm test` | 运行全部测试（`node --test`，当前 91 个用例） |
 | `pnpm run typecheck` | 类型检查（`tsc --noEmit`） |
 
 命令的事实来源是 `package.json` 的 `scripts` 字段。

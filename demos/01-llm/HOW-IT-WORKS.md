@@ -264,6 +264,7 @@ AI: ...
 | 请求体 / 响应解析 / 401 抛错 / 空 content / fetch 抛错 / 非 JSON 错误体 / 流式事件序列、末 chunk 的 `finish_reason`、空闲超时、多字节切分 | `test/deepseek.test.ts`（mock `globalThis.fetch`） |
 | 正文走 stdout、思考指示与截断警告走 stderr、`finish` 只补一个换行 | `test/render.test.ts`（注入两条流） |
 | 一问一答、错误写 stderr 不污染 stdout、报错后继续、多轮上下文形状 | `test/repl.test.ts`（fake `LLMClient`） |
+| 命令解析三态（none / known / unknown）、`/clear` `/history` `/model` 的执行结果、`/model` 查询分支不写 `session.model` | `test/commands.test.ts`（纯函数，直接调 `parseCommand` / `executeCommand`） |
 | 缺 key 抛错、默认值、环境变量覆盖 | `test/config.test.ts` |
 | 缺 key 时 stderr 提示 + 退出码 1 | `test/index.test.ts`（子进程集成测试） |
 

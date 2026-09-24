@@ -34,14 +34,14 @@ llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件�
 | --- | --- | --- | --- |
 | `src/index.ts` | 入口 | 解析配置、组装依赖、启动 REPL；配置缺失时退出码 1 | 任何对话逻辑 |
 | `src/cli/config.ts` | cli | 环境变量 → `Config`，集中默认值 | 读取 `process.env` 之外的事 |
-| `src/cli/repl.ts` | cli | readline 主循环、调用 `LLMClient`、经渲染器呈现流式结果（错误直写 stderr） | HTTP、消息组装细节 |
+| `src/cli/repl.ts` | cli | readline 主循环、解析并执行斜杠命令（经 `core/commands.ts`）、调用 `LLMClient`、经渲染器呈现流式结果（错误直写 stderr） | HTTP、消息组装细节 |
 | `src/core/types.ts` | core | `Role` / `Message` / `ChatResult` / `StreamEvent` / `FinishReason` / `ChatOptions` 类型定义 | 行为 |
 | `src/core/session.ts` | core | 消息数组累积；`toMessages(systemPrompt)` 组装请求消息 | 网络、打印 |
 | `src/core/commands.ts` | core | 命令解析（`parseCommand`）与执行（`executeCommand` → `CommandResult`）；只改 `Session`、不打印 | 打印、网络 |
 | `src/llm/client.ts` | llm | `LLMClient` 接口 + `LLMClientConfig`（测试接缝） | 具体实现 |
 | `src/llm/deepseek.ts` | llm | `fetch` 调用 `/chat/completions`（非流式 + 流式）、解析 `content`、把 SSE chunk 归一化成 `StreamEvent`、非 2xx 抛错 | 打印、重试 |
 | `src/llm/sse.ts` | llm | SSE 分帧（纯函数，只懂协议不懂 DeepSeek） | 网络、解码、事件语义 |
-| `src/cli/render.ts` | cli | `StreamEvent` → stdout/stderr 的呈现 | 累积正文、网络 |
+| `src/cli/render.ts` | cli | `StreamEvent` 与 `CommandResult` → stdout/stderr 的呈现：`createStreamRenderer` / `renderCommandResult` / `renderUnknownCommand` | 累积正文、解析命令、网络 |
 | `loader.mjs` | 构建 | 向 Node 注册 `@/` 别名钩子 | 业务逻辑 |
 | `loader-hooks.mjs` | 构建 | 把 `@/x` 解析为 `src/x` 的真实文件 URL | 业务逻辑 |
 
