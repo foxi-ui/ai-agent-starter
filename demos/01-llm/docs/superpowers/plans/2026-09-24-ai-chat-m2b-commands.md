@@ -27,8 +27,8 @@
 
 ```text
 TypeCheck: 退出码 0
-Test:      54/54 通过
-           config 3 / deepseek 20 / index 1 / render 10 / repl 7 / session 3 / sse 12
+Test:      61/61 通过
+           config 3 / deepseek 23 / index 1 / render 10 / repl 9 / session 3 / sse 12
 Session:   构造函数已是 constructor(model: string)，已有 model getter/setter
 ```
 
@@ -586,6 +586,7 @@ git commit -m "feat: render command results and unknown-command hints"
 **Files:**
 - Modify: `demos/01-llm/src/cli/repl.ts`
 - Test: `demos/01-llm/test/repl.test.ts`（追加 4 例）
+- Modify: `demos/01-llm/test/sse.test.ts`（**Step 4d 只改一处注释**，不动断言）
 
 **Interfaces:**
 - Consumes: `parseCommand` / `executeCommand`（Task 2）、`renderCommandResult` / `renderUnknownCommand`（Task 3）
@@ -874,6 +875,9 @@ git commit -m "feat: handle slash commands in the REPL"
 - Modify: `demos/01-llm/HOW-IT-WORKS.md`
 - Modify: `demos/01-llm/DECISIONS.md`
 - Modify: `demos/01-llm/README.md`
+- Modify: `demos/01-llm/docs/01-full-design.md`（Step 0 ① 一格表格）
+- Modify: `demos/01-llm/docs/superpowers/specs/2026-09-24-ai-chat-m2-design.md`（Step 0 ③ §9 加限定）
+- Modify: `demos/01-llm/src/llm/deepseek.ts`（**Step 0 ③ 只改顶部一句注释，逻辑零改动**）
 - Modify: `README.md`（仓库根，阶段目录表的状态列）
 
 **Interfaces:**
