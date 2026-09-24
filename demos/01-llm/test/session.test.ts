@@ -32,3 +32,27 @@ test('构造时带上当前模型，可读可改', () => {
   assert.equal(s.model, 'deepseek-v4-pro');
   assert.deepEqual(s.toMessages('你是 CLI AI 助手'), before);
 });
+
+test('clear 清空消息并返回条数，不影响当前模型', () => {
+  const s = new Session('deepseek-flash');
+  s.append('user', 'a');
+  s.append('assistant', 'b');
+
+  assert.equal(s.clear(), 2);
+  assert.deepEqual(s.toMessages(''), []);
+  // 清的是对话，不是会话配置
+  assert.equal(s.model, 'deepseek-flash');
+  // 再清一次返回 0，不报错
+  assert.equal(s.clear(), 0);
+});
+
+test('history 返回副本，改它不影响会话内部', () => {
+  const s = new Session('deepseek-flash');
+  s.append('user', 'a');
+
+  const snapshot = s.history();
+  assert.deepEqual(snapshot, [{ role: 'user', content: 'a' }]);
+
+  snapshot.push({ role: 'user', content: '偷偷加的' });
+  assert.equal(s.history().length, 1);
+});

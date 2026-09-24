@@ -72,4 +72,26 @@ export class Session {
   set model(name: string) {
     this.currentModel = name;
   }
+
+  /**
+   * 清空所有消息，返回清掉的条数。
+   *
+   * 不影响当前模型 —— `/clear` 清的是对话内容，不是会话配置。
+   * 返回条数是为了让调用方能给出「已清空 N 条消息」这种有信息量的反馈。
+   */
+  clear(): number {
+    const removed = this.messages.length;
+    this.messages = [];
+    return removed;
+  }
+
+  /**
+   * 返回消息列表的**副本**。
+   *
+   * 返回副本而不是内部数组的引用：`/history` 的渲染只需要读，
+   * 让它拿到引用就等于开了一个「顺手改到会话状态」的口子。
+   */
+  history(): Message[] {
+    return this.messages.slice();
+  }
 }
