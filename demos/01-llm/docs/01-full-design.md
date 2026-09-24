@@ -49,13 +49,13 @@ AI: ...
 
 ### 进阶能力（然后增加）
 
-| 能力 | 说明 |
-|---|---|
-| streaming | SSE 流式输出 |
-| structured output | `response_format` JSON 结构化输出 |
-| conversation history | 会话持久化（JSONL 落盘 + `--resume`） |
-| error handling | 错误分类 + 超时 + 中断回滚 |
-| token statistics | 跨会话 Token 账本与成本估算 |
+| 能力 | 说明 | 落点 |
+|---|---|---|
+| streaming | SSE 流式输出 | M2 |
+| structured output | `response_format` JSON 结构化输出 | M5 |
+| conversation history | 会话持久化（JSONL 落盘 + `--resume`） | M3 |
+| error handling | 错误分类 + 超时 + 中断回滚 | M6 |
+| token statistics | 跨会话 Token 账本与成本估算 | M4 |
 
 ### 开关 / 参数
 
@@ -267,9 +267,15 @@ M1 对话部分（本次）：非流式多轮 + 最小错误处理
 M2 streaming + /clear /model /history
 M3 会话落盘 + --resume + 跨会话账本
 M4 /usage + --no-thinking + --show-reasoning + 上下文预算
-M5 错误分类 + 超时 + 一次性 -p 模式 + 退出码
-M6 文档补全 + 手动冒烟 + 全量验证
+M5 structured output：response_format json_object + JSON 解析 + 包裹/截断的降级处理
+M6 错误分类 + 超时 + 一次性 -p 模式 + 退出码
+M7 文档补全 + 手动冒烟 + 全量验证
 ```
+
+> **M5 是 2026-09-24 补入的。** 原因：structured output 是 `docs/00-guides.md` 第二十六节
+> 阶段 0 验收的六条之一，但原路线 M1–M6 里没有任何一个 M 覆盖它 ——
+> 走完全部增量仍然不达标。详见 `EVALUATION.md` 第 5 项。
+> 补入时插在 M4 与「错误分类」之间并顺延了后续编号，使「文档补全 + 全量验证」保持在最后。
 
 每个 M 结束后都能 `tsc --noEmit` + `node --test` 全绿。
 

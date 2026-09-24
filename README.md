@@ -12,7 +12,7 @@
 
 | 阶段目录 | 项目名 | 路线图目标 | 状态 |
 | --- | --- | --- | --- |
-| `demos/01-llm/` | ai-chat | 阶段 0 · 实践项目 1（AI Chat） | 进行中：M1 对话部分完成，M2–M6 待做 |
+| `demos/01-llm/` | ai-chat | 阶段 0 · 实践项目 1（AI Chat） | 进行中：M1 对话部分完成，M2–M7 待做 |
 | `demos/02-agent/` | ai-chat-agent | 阶段 1 · 实践项目 2（Coding Agent）的起点 | 设计完成，未开始编码 |
 | `demos/03-tools/` | — | 项目 4（Developer Agent）：MCP / Git / Shell / Filesystem | 未开始 |
 | `demos/04-mcp/` | — | 同上 | 未开始 |

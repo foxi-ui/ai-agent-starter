@@ -26,9 +26,9 @@ Build:     N/A   (noEmit，Node 直接运行 .ts，无构建产物)
 | --- | --- | --- | --- |
 | 1 | 独立调用 LLM API | ✅ 达标 | M1 |
 | 2 | 管理上下文 | ✅ 达标 | M1 |
-| 3 | 处理 API 错误 | ⚠️ 部分达标 | M1 最小实现，M5 补全 |
+| 3 | 处理 API 错误 | ⚠️ 部分达标 | M1 最小实现，M6 补全 |
 | 4 | 实现 Streaming | ❌ 未做 | M2 |
-| 5 | 使用 Structured Output | ❌ 未做 | **⚠️ 无落点，见下** |
+| 5 | 使用 Structured Output | ❌ 未做 | M5（2026-09-24 补入） |
 | 6 | 统计 Token / Cost | ❌ 未做 | M4 |
 
 **整体：2 项达标 / 1 项部分 / 3 项未做。**
@@ -79,7 +79,7 @@ M1（本次增量）自身的交付目标 —— **非流式多轮对话 + 最�
 
 **离线证据**：`test/deepseek.test.ts`（6 例）、`test/repl.test.ts`（4 例）、`test/index.test.ts`（1 例，子进程断言退出码）
 
-**未做（属 M5）**
+**未做（属 M6）**
 
 - **错误分类**：统一成带 `code` 的 `LLMError`（`invalid_request` / `unauthorized` / `insufficient_balance` / `retryable` / `timeout` / `network` / `unknown`），REPL 按 code 决定提示
 - **超时**：首字节超时 + 流空闲超时（各默认 30s）。**不能用单一总时长包住整个流** —— 长回答会被误杀
@@ -108,27 +108,27 @@ M1（本次增量）自身的交付目标 —— **非流式多轮对话 + 最�
 
 ---
 
-## 5. 使用 Structured Output — ❌ 未做，且**无落点** ⚠️
+## 5. 使用 Structured Output — ❌ 未做（落点：M5，2026-09-24 补入）
 
 **现状**：完全未实现。
 
 **API 侧已核实**：`response_format: { type: 'text' | 'json_object' }`（`01-full-design.md` §12）。
 
-> ### ⚠️ 这里有一个路线缺口
+> ### 路线缺口（已于 2026-09-24 补上）
 >
-> Structured Output 被列在 `01-full-design.md` §2 的「进阶能力」，但 §11 的增量路线 **M1–M6 里没有任何一个 M 包含它**：
+> 本项原本**没有落点**：Structured Output 只被列在 `01-full-design.md` §2 的「进阶能力」，
+> 而 §11 的原增量路线 M1–M6 里**没有任何一个 M 包含它** —— 走完全部增量，阶段 0 的这条验收项依然不会达标。
 >
-> ```text
-> M2 streaming + /clear /model /history
-> M3 会话落盘 + --resume + 跨会话账本
-> M4 /usage + --no-thinking + --show-reasoning + 上下文预算
-> M5 错误分类 + 超时 + 一次性 -p 模式 + 退出码
-> M6 文档补全 + 手动冒烟 + 全量验证
-> ```
+> **已处理**：在 `01-full-design.md` §11 中插入新的 **M5**，原 M5 / M6 顺延为 M6 / M7
+> （插在「上下文预算」与「错误分类」之间，使「文档补全 + 全量验证」保持在最后）。
+> 同时给 §2 的「进阶能力」表补了「落点」列，避免再出现「列了能力但没有增量认领」。
 >
-> **后果：按现有路线走完 M6，阶段 0 的这条验收项依然不会达标。**
+> **实施 M5 时至少覆盖**：
 >
-> **建议**：补一个增量（建议插在 M4 与 M5 之间，或并入 M5），至少覆盖：请求侧传 `response_format`、解析 JSON 响应、**JSON 解析失败时的降级行为**（这是最容易漏的边界 —— 模型可能返回被 markdown 代码块包住的 JSON）、以及 `finish_reason: 'length'` 导致 JSON 截断时的处理。
+> - 请求侧传 `response_format`
+> - 解析 JSON 响应
+> - **JSON 解析失败的降级行为** —— 最容易漏的边界：模型可能返回被 markdown 代码块包住的 JSON（```` ```json ... ``` ````），直接 `JSON.parse` 会炸
+> - **`finish_reason: 'length'` 导致 JSON 截断**时的处理 —— 拿到半个对象应该报错还是尽力解析，需要明确决定
 
 ---
 
