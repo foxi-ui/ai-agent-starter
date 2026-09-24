@@ -1,5 +1,6 @@
 # DeepSeek API 事实汇总
 
+> 回答：模型、价目、错误码分别是什么？
 > 查表用。设计叙述见 `ARCHITECTURE.md`，坑与解法见 `troubleshooting.md`。
 > 来源：原 01-llm 完整蓝图 §12（现 `archive/01-llm/01-full-design.md`），2026-09-24 迁出。
 
