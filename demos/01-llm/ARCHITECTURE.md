@@ -25,6 +25,8 @@ llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件�
 `llm/`（如何调用）与 `cli/`（如何交互），`core/` 保持稳定。
 **streaming（M2a）已经按这个方式落过一遍** —— 新增 `llm/sse.ts` 与 `cli/render.ts`
 两个文件，`core/types.ts` 只多了几个类型，`core/session.ts` 只多了一个 `model` 存取器。
+**commands（M2b）** 是这条法则的一个例外：命令逻辑落在**新增的 `core/commands.ts`** 里，
+因为 `core` 不许写 stdout，所以「改 Session」留在 core、「打印」放进 `cli/render.ts` —— 分层反而更严了。
 
 ## 模块职责
 
@@ -35,6 +37,7 @@ llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件�
 | `src/cli/repl.ts` | cli | readline 主循环、调用 `LLMClient`、经渲染器呈现流式结果（错误直写 stderr） | HTTP、消息组装细节 |
 | `src/core/types.ts` | core | `Role` / `Message` / `ChatResult` / `StreamEvent` / `FinishReason` / `ChatOptions` 类型定义 | 行为 |
 | `src/core/session.ts` | core | 消息数组累积；`toMessages(systemPrompt)` 组装请求消息 | 网络、打印 |
+| `src/core/commands.ts` | core | 命令解析（`parseCommand`）与执行（`executeCommand` → `CommandResult`）；只改 `Session`、不打印 | 打印、网络 |
 | `src/llm/client.ts` | llm | `LLMClient` 接口 + `LLMClientConfig`（测试接缝） | 具体实现 |
 | `src/llm/deepseek.ts` | llm | `fetch` 调用 `/chat/completions`（非流式 + 流式）、解析 `content`、把 SSE chunk 归一化成 `StreamEvent`、非 2xx 抛错 | 打印、重试 |
 | `src/llm/sse.ts` | llm | SSE 分帧（纯函数，只懂协议不懂 DeepSeek） | 网络、解码、事件语义 |

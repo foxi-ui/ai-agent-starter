@@ -112,11 +112,11 @@ function parseSse(chunk: string, buffer?: string): { events: SseEvent[]; rest: s
 
 ### D-M2-5. 一个硬编码的流空闲超时（30s），不加开关
 
-`deepseek.ts` 内部维护一个计时器，**每收到一个 chunk 就重置**；超时用内部 `AbortController` 断开连接并抛普通 `Error`。
+`deepseek.ts` 内部维护一个计时器，**每收到一个 chunk 就重置**；超时只 reject 并抛普通 `Error`，连接由流收尾的 `reader.cancel()` 收掉（**没有** `AbortController`）。
 
 **为什么流式必须有**：非流式时卡住是「整个请求没响应」，用户明确知道在等；流式时已经打印了半句话然后停住，**用户无法区分「模型在想」和「连接死了」**。
 
-**实现观察**：流式下「首字节超时」就是「第一个 chunk 之前的空闲超时」——同一个计时器覆盖两种情形。蓝图 §6 把它们写成两条，是因为非流式下这两者确实不同。
+**实现观察**：流式下「首字节超时」就是「第一个 chunk 之前的空闲超时」——同一个计时器覆盖两种情形。蓝图 §6 把它们写成两条，是因为非流式下这两者确实不同。**限定（2026-09-24 补）**：计时器建立在拿到 `response.body` **之后**，`await fetch(...)` 之上没有本项目的时限，因此它覆盖的是「**响应头之后的**首字节」；真正的首字节超时归 M6，详见 §9 与 `DECISIONS.md` D21。
 
 **放弃**：把 `--timeout` 开关一起做（那是 M6），或不做超时（卡住的流永久挂死）。
 
@@ -457,7 +457,7 @@ export function renderUnknownCommand(
     `await fetch(...)` 之上没有本项目的时限 —— 服务端接受连接但不回响应头时会等到
     undici 默认的 `headersTimeout`（约 300s）才失败，不是 30s。它覆盖的是
     「**响应头之后的**首字节」；真正的首字节超时归 M6。见 `DECISIONS.md` D21
-- 超时动作：内部 `AbortController.abort()` 断开连接，抛 `new Error('流空闲超时（30s 无数据），已中断')`
+- 超时动作：只 reject 并抛 `new Error('流空闲超时（30s 无数据），已中断')`；连接由流收尾的 `reader.cancel()` 收掉（**没有** `AbortController`）
 - 错误去向：`repl` 的 `catch` → stderr；**不追加 assistant 消息**
 
 **测试方式**：常量以参数形式可注入（默认 30s），测试传一个极短值；或用假计时器。具体手法由实施计划决定。

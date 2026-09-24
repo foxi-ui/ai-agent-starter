@@ -97,10 +97,22 @@ AI: ...
 | 命令 | 作用 |
 | --- | --- |
 | `pnpm start` | 启动 REPL |
-| `pnpm test` | 运行全部测试（`node --test`，当前 61 个用例） |
+| `pnpm test` | 运行全部测试（`node --test`，当前 88 个用例） |
 | `pnpm run typecheck` | 类型检查（`tsc --noEmit`） |
 
 命令的事实来源是 `package.json` 的 `scripts` 字段。
+
+## REPL 命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `/clear` | 清空当前会话的消息（不影响当前模型） |
+| `/history` | 列出当前会话的消息，每条截断到 200 字符 |
+| `/model` | 显示当前模型 |
+| `/model <name>` | 切换模型，立即对后续请求生效 |
+
+命令**不进入对话上下文**，也不会被发给模型。`/model` 不校验模型名 ——
+写错的名字会在下一次请求时由 API 报错（走 stderr）。
 
 ## 项目结构
 
@@ -119,6 +131,7 @@ AI: ...
     cli/render.ts       # StreamEvent → stdout/stderr
     core/types.ts       # Message / Role / ChatResult / StreamEvent / ChatOptions 类型
     core/session.ts     # 会话：消息数组、append、toMessages
+    core/commands.ts    # 命令解析（parseCommand）与执行（executeCommand → CommandResult）
     llm/client.ts       # LLMClient 接口（测试替身的接缝）
     llm/deepseek.ts     # DeepSeek adapter：非流式 + 流式调用、响应解析
     llm/sse.ts          # SSE 分帧（纯函数）
@@ -130,6 +143,7 @@ AI: ...
     repl.test.ts
     config.test.ts
     index.test.ts       # 入口集成测试（子进程，验证退出码）
+    commands.test.ts    # 命令解析与执行（纯函数，无需捕获输出）
 ```
 
 ## 当前能力边界
@@ -137,6 +151,7 @@ AI: ...
 **已实现**
 
 - 非流式多轮对话 + **流式（SSE）逐字输出**，上下文在进程内存中累积
+- REPL 命令：`/clear` `/history` `/model`
 - 思考过程默认不展开，仅在 stderr 给一行 `[思考中…]` 指示
 - `system` / `user` / `assistant` 三种 role 的消息组装
 - 最小错误处理：API 报错打印到 **stderr** 后继续循环，不崩溃、不污染上下文；
@@ -144,7 +159,7 @@ AI: ...
 
 **尚未实现（后续增量）**
 
-- 命令：`/clear` `/history` `/model` `/usage`
+- 命令：`/usage`（Token 统计尚未实现，属 M4）
 - 会话持久化（JSONL 落盘、`--resume`）
 - token 统计 / 成本账本、上下文预算裁剪
 - 错误分类与自动重试、`--timeout`、`-p` 一次性模式

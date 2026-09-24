@@ -425,7 +425,7 @@ ok 7 - test/support/helper.ts
 
 **症状**
 
-同样是「`@/` 指向的模块不存在」，报错完全不同：
+同样是 `@/` 导入出错，报错有**三种**形状，根因各不相同：
 
 ```console
 # 情形 A：漏了 --import ./loader.mjs
@@ -435,6 +435,11 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@/cli' imported from .../test
 Error: ENOENT: no such file or directory, open
        '/Users/.../demos/01-llm/src/llm/__does_not_exist.ts'
   code: 'ENOENT'
+
+# 情形 C：模块存在，但没有导出那个名字
+#（「给既有模块加函数」的 TDD RED 阶段最常遇到）
+Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.ts'
+  does not provide an export named 'renderCommandResult'
 ```
 
 **原因**
@@ -445,20 +450,26 @@ Error: ENOENT: no such file or directory, open
   于是报 `ENOENT` + 绝对路径 —— 报错里能看到 `src/` 的真实路径。
 - **不带 loader**：`@/cli` 被当成**裸包名**去做 node_modules 解析，于是报
   `Cannot find package`。
+- **情形 C**：前两种都是「模块不存在」，这一种是「**模块存在，但没有导出那个名字**」。
+  ESM 的具名导入在**模块链接期**（任何代码执行之前）静态校验，所以文件本身
+  **一行都没跑**就被拒。报错里的路径是**确实存在**的那个文件。
 
 **定位**
 
-看报错里有没有绝对路径：
+看报错里有没有绝对路径、以及说的是「找不到模块」还是「找不到导出」：
 
 - 有 → 情形 B，**别名机制是好的**，缺的是那个文件（检查路径拼写、文件名）
 - 没有、且说的是 `package '@/'` → 情形 A，检查命令有没有带 `--import ./loader.mjs`
+- 说的是 `does not provide an export named 'X'` → 情形 C，**路径是对的**，
+  对不上的是**导出名**（拼写、忘了写 `export`、或以为走的是默认导出）
 
 **避免**
 
-写「预期会失败」的测试期望时，先确认是哪种情形 —— 这两种报错长得很像，但根因完全不同。
+写「预期会失败」的测试期望时，先确认是哪种情形 —— 三种报错长得很像，但根因完全不同
+（情形 C 最容易误判成「文件没写」，于是去改一个本来没问题的路径）。
 
 来源：实测（2026-09-24 M2a Task 2 实施时，实现者按 brief 的期望去核对，发现期望写的是情形 A、
-实际发生的是情形 B）。
+实际发生的是情形 B）。情形 C 由 M2b Task 2 实施时的 TDD RED 实测补充（2026-09-24）。
 
 ---
 
