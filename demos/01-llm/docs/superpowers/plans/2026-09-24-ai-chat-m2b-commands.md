@@ -898,7 +898,19 @@ stdout 已经写出了 `AI: ` 与半截正文 —— 同文件另一处（「边
    **整轮一个字都没产出就**抛错时一个字都不写 —— 失败时 stdout 不会留下一个空的 `AI: `
 ```
 
-两处都**不改变任何行为**，改完 `pnpm test` 应仍为 61/61（用例数不变）。
+**③ 两处超时相关的文档不精确（M2a 复评的 out-of-scope 观察，登记在此免丢失）**
+
+这两处与 M2a 的 C-4 是**同一个过度声明**的另外两处，随 M6 的 `--timeout` 落地时一起收口最省；
+若本任务顺手改也无妨（纯文档）：
+
+- `src/llm/deepseek.ts` 顶部注释写「它同时覆盖『首字节超时』——第一个 chunk 之前的等待就是第一次空闲」。
+  与 C-4 同类：计时器在拿到 `response.body` **之后**才建立，`await fetch(...)` 之上没有本项目的时间界，
+  所以它覆盖的是「**响应头之后**的首字节」。
+- `docs/superpowers/specs/2026-09-24-ai-chat-m2-design.md` 的 §9 写「超时动作：内部 `AbortController.abort()`
+  断开连接」——**与实现不符**：`src/` 全仓无 `AbortController`（唯一的 `aborted` 是 `core/types.ts` 里的一个
+  `FinishReason` 字符串），`readWithIdleTimeout` 只是 reject，连接由 `reader.cancel()` 收掉。
+
+**①②③ 都不改变任何行为**，改完 `pnpm test` 应仍为 61/61（用例数不变）。
 - [ ] **Step 1: 在 `HOW-IT-WORKS.md` 的数据流图后加一节**
 
 在「流式：屏幕上看到的 ≠ 模型记得的」之后插入：
