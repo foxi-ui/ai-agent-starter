@@ -438,7 +438,7 @@ Error: ENOENT: no such file or directory, open
 
 # 情形 C：模块存在，但没有导出那个名字
 #（「给既有模块加函数」的 TDD RED 阶段最常遇到）
-Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.ts'
+SyntaxError: The requested module '@/cli/render.ts'
   does not provide an export named 'renderCommandResult'
 ```
 
@@ -452,7 +452,8 @@ Error [ERR_MODULE_NOT_FOUND] / SyntaxError: The requested module '@/cli/render.t
   `Cannot find package`。
 - **情形 C**：前两种都是「模块不存在」，这一种是「**模块存在，但没有导出那个名字**」。
   ESM 的具名导入在**模块链接期**（任何代码执行之前）静态校验，所以文件本身
-  **一行都没跑**就被拒。报错里的路径是**确实存在**的那个文件。
+  **一行都没跑**就被拒。报错里回显的是**别名原样**（`'@/cli/render.ts'`，
+  不像情形 B 会展开成绝对路径），但它指向的文件确实存在 —— 错的是**导出名**。
 
 **定位**
 
