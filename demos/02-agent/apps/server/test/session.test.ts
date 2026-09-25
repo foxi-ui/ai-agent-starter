@@ -82,7 +82,15 @@ test('appendAll 按顺序追加多条', () => {
     { role: 'assistant', content: '晴天。' },
   ]);
 
-  assert.strictEqual(session.history().length, 3);
+  // 断言**逐条原样**而不是只数条数：条数断言挡不住「顺序颠倒」，
+  // 也挡不住带 tool_calls 的那条在 history() 里被 cloneMessage 削平。
+  assert.deepStrictEqual(session.history(), [
+    { role: 'assistant', content: null, tool_calls: [
+      { id: 'c1', type: 'function', function: { name: 'weather', arguments: '{}' } },
+    ] },
+    { role: 'tool', content: '"晴"', tool_call_id: 'c1' },
+    { role: 'assistant', content: '晴天。' },
+  ]);
 });
 
 test('改 history() 返回值里的 tool_calls 不影响会话状态', () => {

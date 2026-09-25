@@ -1099,12 +1099,16 @@ git commit -m "feat(web): 对话框组件、工具轨迹渲染与会话恢复"
 
 ### Task 15: 文档与既有产物同步
 
-根 `AGENTS.md` 与根 `README.md` 已经在本项目之前改完了，本 Task 只负责 `demos/02-agent/` 自己的文档。
+`demos/02-agent/` 自己的文档由本 Task 新建。**仓库根的 `README.md` 与 `AGENTS.md` 也由本 Task 收尾** ——
+L1 已经把 `02-agent` 那一行与跨阶段约束的措辞改到与当时进度相符，但那时写的是「L1 完成，L2–L6 待做」，
+**本 Task 必须把它改成最终状态**：否则根 `README.md` 会永远停在「进行中」，而它正是根 `AGENTS.md`
+指定的「知道现在做到哪了」的入口。
 每份文档的头部 `> 回答：…` 一行**必须与根 `AGENTS.md` 的职责表一致，且只写一个问号**。
 
 **Files:**
 - Create: `demos/02-agent/{README.md,ARCHITECTURE.md,DECISIONS.md,EVALUATION.md}`、`docs/troubleshooting.md`
 - Modify: `demos/02-agent/docs/how-agent-works.html`
+- Modify: 仓库根 `README.md`（`02-agent` 那一行改成完成态）、仓库根 `AGENTS.md`（「已知坑」补一条指向 `demos/02-agent/docs/troubleshooting.md`）
 
 **Interfaces:**
 - Consumes: Task 1–14 的全部产物
