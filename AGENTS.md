@@ -56,8 +56,8 @@ AI 与人都靠「这个问题该去哪份文档找」来导航。一份文档�
 
 - **Node ≥ 22**，依赖原生类型擦除直接运行 `.ts`
 - **服务端不引入构建步骤**：无打包、无转译产物，`node --import ./loader.mjs src/**.ts` 直接跑。
-  **前端是唯一的例外** —— `web/` 自带 Vite 工具链、独立 `package.json`、独立构建产物与独立
-  `pnpm install`，不进各阶段的 `pnpm test` / `tsc --noEmit` 口径（见 `demos/02-agent/web/`）
+  **前端是唯一的例外** —— `apps/web/` 自带 Vite 工具链、独立 `package.json` 与独立构建产物，
+  不进服务端的 `pnpm test` / `tsc --noEmit` 口径（见 `demos/02-agent/apps/web/`）
 - **不用需要「代码变换」的 TS 特性**（参数属性 / `enum` / `namespace` / 实验性装饰器）——
   原生类型擦除只做擦除不做变换。`tsc --noEmit` 对它们**放行**，只有运行时才炸
   （见 `demos/01-llm/docs/troubleshooting.md` T11）。
@@ -78,7 +78,15 @@ AI 与人都靠「这个问题该去哪份文档找」来导航。一份文档�
 
 ## 开发命令
 
-在**具体阶段目录下**执行（各阶段是独立项目，根目录没有 `package.json`）：
+在**具体阶段目录下**执行（各阶段是独立项目，根目录没有 `package.json`）。
+「独立」指的是**阶段之间**互不依赖；一个阶段内部可以有多个应用，
+用 pnpm workspace 组织（当前只有 `demos/02-agent/` 这么做）：
+
+```text
+demos/NN/            阶段根：没有源码，只有编排脚本与文档
+  apps/<app>/        每个应用一个 package.json
+```
+
 
 ```bash
 pnpm install
@@ -93,12 +101,14 @@ pnpm run typecheck  # tsc --noEmit
 node --import ./loader.mjs --test test/<name>.test.ts
 ```
 
-有前端的阶段（当前只有 `demos/02-agent/`）多一个服务端入口；`web/` 是**独立项目**，
-要单独安装、单独启动：
+workspace 形式的阶段（当前只有 `demos/02-agent/`）在**阶段根**一条命令跑全部，
+依赖也只装一次；要单独操作某个应用时用 `pnpm -F <app>`：
 
 ```bash
-pnpm start:server   # HTTP 服务端
-cd web && pnpm install && pnpm dev   # 前端 dev server
+pnpm install         # 一次装完 apps/ 下所有应用
+pnpm start           # 起服务端
+pnpm dev             # 并行起服务端 + 前端 dev server
+pnpm -F web build    # 只构建前端
 ```
 
 ## 阶段之间的关系
@@ -113,7 +123,7 @@ cd web && pnpm install && pnpm dev   # 前端 dev server
 
 ## 修改代码时的注意事项
 
-- 改 `package.json` 里跑 `.ts` 的脚本时（`start` / `start:server` / `test`），**每一个都要带 `--import ./loader.mjs`**，漏一个会出现「测试过但 `pnpm start` 挂」
+- 改 `package.json` 里跑 `.ts` 的脚本时（`start` / `dev` / `test`），**每一个都要带 `--import ./loader.mjs`**，漏一个会出现「测试过但 `pnpm start` 挂」
 - **文档跟代码同一次改动一起更新**。碰到下面任一项，就要检查对应文档：
   `目录结构` → README / ARCHITECTURE；`命令` → README；`配置/环境变量` → README / DECISIONS；`依赖` → README / DECISIONS；`架构` → ARCHITECTURE / DECISIONS
 - 遇到新坑并解决后，**随手追加**一条到该阶段的 `docs/troubleshooting.md`，不要攒着
