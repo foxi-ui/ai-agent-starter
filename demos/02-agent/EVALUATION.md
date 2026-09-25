@@ -22,10 +22,31 @@ dist/assets/index-*.js        225.04 kB │ gzip: 70.82 kB
 ✓ built in 463ms
 ```
 
-**尚未执行**：`plans/2026-09-25-l6-web-and-docs.md` Task 16 的 Step 2（密钥泄漏扫描）、
-Step 3（真实 API 的 curl 冒烟）、Step 4（浏览器端到端 8 条）。
-也就是说，**下面这些验收项的证据目前是「自动化测试通过」，不是「真实模型跑通」** ——
-真实链路（真的开出一张调用单、真的执行工具、浏览器里真的看见轨迹）还没验证过。
+**真实 API 冒烟（已执行，实测输出摘要）**
+
+密钥泄漏扫描：源码 / 文档 / 构建产物里搜不到 key（含前 12 位片段）；
+`.env.local` 与 `node_modules` 均被 git 忽略；`dist` 原本没被忽略，已补 `apps/web/.gitignore`。
+
+真 key 起服务端，三个工具**都被模型真实触发**（`argumentsText` 是模型逐字生成的原文）：
+
+```text
+POST /api/sessions                       → 201 {"sessionId":"20260926-004603-9c58","model":"deepseek-flash"}
+「北京今天天气怎么样？」                  → weather      arguments {"city": "Beijing"}      ok:true  25°C/Sunny
+「1+2*3 等于几」                          → calculator   arguments {"expression": "1 + 2 * 3"} ok:true  result:7
+「现在几点了」                            → get_time     arguments {}                        ok:true  ISO 时间
+GET  .../messages                         → 9 个展示项（三组 user / tool / assistant，顺序正确）
+GET  /api/sessions/nope/messages          → 404
+坏 key 发一次消息                          → 502 upstream_error（**不是 401**）
+```
+
+最后一条是 Review Focus 那条硬约束的实证：上游的 401 只出现在 `message` 文本里
+（DeepSeek 自己还把 key 打码成 `****-key`），状态码没有透出。
+
+**尚未执行**：Task 16 Step 4 的**浏览器端到端 8 条**（工具轨迹是否可见、连刷三次页面是否只有 GET、
+杀掉服务端后刷新是否出现可关闭提示、错误气泡能否关掉……）—— 这些需要人在浏览器里点。
+其中「刷新页面不该多建会话」这条已由代码确认：`useChat.ts` 的 mount 只发 `GET`
+（`fetchHistory`），`POST /api/sessions` 只在 `send()` 里、且仅当没有本地 id 时调用。
+其余 7 条仍待人工确认。
 
 ## ROADMAP 阶段 1
 
