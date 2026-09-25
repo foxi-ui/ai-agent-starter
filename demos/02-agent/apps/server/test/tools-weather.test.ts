@@ -13,7 +13,10 @@ test('Beijing 命中内置表', async () => {
 
 test('城市名大小写与首尾空白不影响命中', async () => {
   const result = await weatherTool.run({ city: '  beijing  ' });
-  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result, {
+    ok: true,
+    value: { city: 'beijing', temperature: '25°C', condition: 'Sunny' },
+  });
 });
 
 test('未收录的城市返回兜底值并注明是模拟数据', async () => {
