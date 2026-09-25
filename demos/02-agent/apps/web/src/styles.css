@@ -1,0 +1,230 @@
+:root {
+  --ground: #f4f5f7;
+  --surface: #ffffff;
+  --ink: #191c22;
+  --ink-faint: #8a92a0;
+  --line: #dce0e7;
+  --user: #40454f;
+  --user-bg: #f2f4f7;
+  --llm: #3d50b4;
+  --llm-bg: #e7eafb;
+  --tool: #0e7c66;
+  --tool-bg: #dff1ec;
+  --warn: #a63b3b;
+  --warn-bg: #faebeb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ground: #11141a;
+    --surface: #191d25;
+    --ink: #e7eaf0;
+    --ink-faint: #737c8c;
+    --line: #2b313c;
+    --user: #c6ccd6;
+    --user-bg: #1b1f27;
+    --llm: #93a2f0;
+    --llm-bg: #1f2540;
+    --tool: #5bc4a8;
+    --tool-bg: #12291f;
+    --warn: #e89393;
+    --warn-bg: #35201f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  max-width: 760px;
+  height: 100dvh;
+  margin: 0 auto;
+}
+
+.app__header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.app__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.app__meta {
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 20px 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 14px;
+}
+
+.notice button {
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+}
+
+.list__empty {
+  margin: auto;
+  color: var(--ink-faint);
+  text-align: center;
+  font-size: 14px;
+}
+
+.bubble {
+  max-width: 88%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bubble--user {
+  align-self: flex-end;
+  background: var(--user-bg);
+  color: var(--user);
+  border: 1px solid var(--line);
+}
+
+.bubble--assistant {
+  align-self: flex-start;
+  background: var(--llm-bg);
+  color: var(--llm);
+}
+
+.bubble--error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  align-self: stretch;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 14px;
+}
+
+/* 错误气泡的关闭按钮（spec §13 要求错误提示可关闭） */
+.bubble__close {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.tool {
+  align-self: flex-start;
+  max-width: 88%;
+  padding: 8px 12px;
+  border-left: 3px solid var(--tool);
+  border-radius: 6px;
+  background: var(--tool-bg);
+  color: var(--tool);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.tool__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.tool__badge {
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.tool__body {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.9;
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.composer__input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  resize: none;
+}
+
+.composer__input:focus {
+  outline: 2px solid var(--llm);
+  outline-offset: -1px;
+}
+
+.composer__send {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  background: var(--llm);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.composer__send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
