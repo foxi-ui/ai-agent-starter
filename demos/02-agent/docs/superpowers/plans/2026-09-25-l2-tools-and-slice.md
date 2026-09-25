@@ -726,9 +726,12 @@ L3 之后，「开调用单」由模型完成，很容易让人以为工具调�
 ⑥ 拼回    [ assistant{tool_calls}, tool{tool_call_id} ]
 ```
 
-**它同时是真实的测试覆盖**：别的测试都用**假的**注册表（`agent.test.ts` 里的 `fakeRegistry`），
-只有这一条把**真的** `createToolRegistry()` 串进去。`test/` 在本仓库约定「与被测模块一一对应」，
+**它同时是本步唯一覆盖「消息组装接缝」的测试**：`test/` 在本仓库约定「与被测模块一一对应」，
 这份文件是**刻意的例外** —— 它测的不是某个模块，而是**模块之间的接缝**。
+
+（更正一处早先的说法：真注册表**并非只有它用** —— `tools-registry.test.ts` 全程打的就是真
+`createToolRegistry()`；`agent.test.ts` 要到 L4 才存在。本文件独有的是 ⑨ 那条把
+「解析 → 派发 → 序列化 → 拼两条 assistant/tool 消息」走完的路径，别处没有覆盖。）
 
 **Files:**
 - Create: `demos/02-agent/apps/server/test/tool-call-walkthrough.test.ts`

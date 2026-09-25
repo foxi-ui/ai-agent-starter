@@ -10,6 +10,15 @@ import type { Message, ToolCall } from '@/core/types.ts';
  * 这九条用例连起来读，就是 L4 那个循环体的一次迭代 ——
  * 先把一次迭代手工做对，再去写循环。
  *
+ * **读的时候要分清哪几条是真覆盖、哪几条是旁白：**
+ * - ①④⑦⑧⑨ 打的是**真的** `createToolRegistry()`，改坏 `tools/` 里任何一处它们会红。
+ *   ⑨ 尤其是本文件独有的一条：它走完「解析 → 派发 → 序列化 → 拼两条消息」，
+ *   这条**消息组装接缝**别处没有覆盖。
+ * - ②③⑤⑥ 是**可执行的旁白**：断言的字符串/字面量就在它们上面一两行手写着，
+ *   真正的校验其实发生在编译期（`ToolCall` / `Message` 的类型标注由 `tsc` 把关）。
+ *   留着它们是让读的人**看见**模型那一轮的产出长什么样，
+ *   但**不要把它们算成覆盖率** —— 任何实现改动都不会让它们变红。
+ *
  * 为什么不含「参数不是合法 JSON」那条：解析是**循环的职责**（见 L4 的
  * core/agent.ts），注册表拿到的永远是「已经解析好的参数」。这里不越位。
  */
@@ -113,6 +122,9 @@ test('⑨ 连起来：这一串动作就是 L4 那个循环体的一次迭代', 
     { role: 'tool', tool_call_id: toolCall.id, content },
   ];
 
+  // 下面这个字符串由 JSON.stringify 精确匹配，因此它同时钉住了 weather.ts 里
+  // value 的**属性插入顺序**（city, temperature, condition）。
+  // 单纯重排那几个键、行为完全不变，也会让这条变红 —— 那是误报，不是回归。
   assert.deepStrictEqual(added, [
     { role: 'assistant', content: null, tool_calls: [toolCall] },
     {
