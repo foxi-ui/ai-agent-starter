@@ -1,56 +1,18 @@
-// LLM 客户端的接口定义（只有类型，没有实现）。
+// LLM 客户端的接口。core 层只认它，不知道背后是 DeepSeek。
 //
-// 这是整个架构的「接缝」：CLI 只依赖这个接口，不关心背后
-// 是 DeepSeek 还是别的服务商。好处是测试时可以塞一个假实现进去，
-// 于是 REPL 的全部行为都能在没有网络、没有 API key 的情况下断言。
+// 它是本项目最重要的一个测试接缝：测试塞一个手写的对象字面量进来，
+// 整个 Agent 循环就能在没有网络、没有 API key 的情况下被断言。
 
-import type { ChatOptions, ChatResult, Message, StreamEvent } from "@/core/types.ts";
+import type { ChatOptions, ChatResult, Message } from '@/core/types.ts';
 
-/**
- * 一次对话补全的调用入口。
- *
- * 所有实现都必须满足这个约定：给定完整的消息数组，返回模型的回答。
- */
 export interface LLMClient {
-  /**
-   * 发送一次请求，拿到模型的回答。
-   *
-   * @param messages 完整对话历史（含 system），按时间顺序排列
-   * @param options 本次请求的可选参数（如指定模型）
-   * @returns 模型回答；失败时应当抛出 Error，而不是返回空值
-   */
   chat(messages: Message[], options?: ChatOptions): Promise<ChatResult>;
-
-  /**
-   * 发送一次**流式**请求，逐个事件吐出。
-   *
-   * 与 `chat()` 并存而不是取而代之：`chat()` 是「一次拿完整结果」的简单参照实现，
-   * 两者对照着看正是本阶段要学的东西；且保留它不作废既有的非流式测试。
-   *
-   * 实现约定：
-   * - 非 2xx 必须在**开始产出事件之前**抛出
-   * - 抛错时已产出的事件保留（调用方自己决定怎么处理半截内容）
-   *
-   * @param messages 完整对话历史（含 system），按时间顺序排列
-   * @param options 本次请求的可选参数（如指定模型）
-   */
-  chatStream(messages: Message[], options?: ChatOptions): AsyncIterable<StreamEvent>;
 }
 
-/** 连接一个 LLM 服务所需的配置 */
 export interface LLMClientConfig {
-  /** API 密钥。只从环境变量读入，禁止写死在代码里 */
+  /** API key，只从环境变量读，禁止写死 */
   apiKey: string;
-  /** 服务地址，例如 https://api.deepseek.com */
+  /** 例如 https://api.deepseek.com */
   baseUrl: string;
-  /** 模型名，例如 deepseek-flash */
   model: string;
 }
-
-/**
- * 「配置 → 客户端」的工厂函数类型。
- *
- * 用于依赖注入：入口拿到配置后调用工厂造出客户端，再把它传给
- * `runRepl`。`runRepl` 全程只认 `LLMClient` 接口，不知道具体实现。
- */
-export type LLMClientFactory = (config: LLMClientConfig) => LLMClient;

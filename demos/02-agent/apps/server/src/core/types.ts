@@ -5,37 +5,43 @@
 // 将来要扩展消息形状（比如加 name、tool_calls），只需改这一个文件。
 
 /**
- * 消息的三种角色。这是 OpenAI-compatible 接口的通用约定：
+ * 消息的四种角色。这是 OpenAI-compatible 接口的通用约定：
  *
  * - `system`    —— 给模型的固定指令（「你是谁、该怎么回答」）
  * - `user`      —— 用户说的话
- * - `assistant` —— 模型的回答
+ * - `assistant` —— 模型的回答（可能不含正文、只开一张工具调用单）
+ * - `tool`      —— **程序**执行工具后填回的结果，不是模型说的
  */
-export type Role = 'system' | 'user' | 'assistant';
+export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
 /**
  * 一条对话消息，也是发给 API 的最小单位。
  *
+ * 它是**可辨识联合**而不是扁平结构：三种角色的字段并不相同 ——
+ * assistant 可能只开调用单没有说话（`content` 为 `null`），
+ * tool 必须说明自己在回应哪一张调用单（`tool_call_id`）。
+ * 写成扁平 interface 用可选字段糊过去，会让「assistant 忘了带 tool_calls」
+ * 这类 bug 一路溜到运行时才发现。
+ *
  * 关键理解：模型本身不「记得」任何东西。所谓多轮对话，
  * 靠的是每次把完整的消息数组重新发过去。
- * 所以「上下文管理」= 维护好这个数组。
  */
-export interface Message {
-  /** 谁说的 */
-  role: Role;
-  /** 说了什么。这里是纯文本，不含任何格式标记 */
-  content: string;
-}
+export type Message =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: ToolCall[] }
+  | { role: 'tool'; tool_call_id: string; content: string };
 
 /**
  * `LLMClient.chat()` 的返回值。
  *
- * 目前只包一个 `content` 字段，而不是直接返回 `string`，
- * 是为了给后续增量（token 用量统计、结束原因等）留出扩展位，
- * 将来加字段不必改动所有调用方。
+ * `content` 在工具调用轮次里可以是 `null` —— 模型那一轮没说话，只开了调用单。
+ * 所以调用方**不能**假设它一定有正文；兜底成 `''` 会让「模型说了空话」
+ * 与「模型没说话」变得无法区分。
  */
 export interface ChatResult {
-  content: string;
+  content: string | null;
+  tool_calls?: ToolCall[];
+  finish_reason: FinishReason;
 }
 
 /**
@@ -53,18 +59,53 @@ export type FinishReason =
   | 'aborted';
 
 /**
- * 流式响应归一化后的事件。
+ * 模型开出的一张「调用单」。
  *
- * llm 层把「DeepSeek/OpenAI 的 SSE chunk」翻译成这三种事件，
- * cli 层只认这三种，不知道 SSE 的存在。
+ * 关键理解：模型**从不执行**任何函数。它只是输出了这个结构 ——
+ * 函数名与参数都是文字，真正去执行的是我们的程序（见 tools/ 与 core/agent.ts）。
  *
- * 注意：**没有 `usage` 事件**。Token 统计属于 M4，现在解析了也没有消费者，
- * 与其定义一个没人用的 `TokenUsage` 并连带写测试，不如等 M4 一起做。
+ * `arguments` 是 **JSON 字符串**而不是对象：模型逐字生成文本，中途可能截断，
+ * 所以它天然可能是非法 JSON，解析必须容错（见 core/agent.ts）。
  */
-export type StreamEvent =
-  | { type: 'text-delta'; text: string }
-  | { type: 'reasoning-delta'; text: string }
-  | { type: 'done'; reason: FinishReason };
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+/**
+ * 工具的**声明** —— 发给模型看的那份说明，不是实现。
+ *
+ * 这里是**扁平形状**（name/description/parameters 平铺）。
+ * 线上的 `tools` 数组元素要再包一层 `{type:'function', function:{…}}`，
+ * 那层包装收敛在 llm/deepseek.ts 的 toWireTools() 里 ——
+ * 内部的调用方只关心「叫什么、要什么参数」。
+ */
+export interface Tool {
+  name: string;
+  description: string;
+  parameters: {
+    type: 'object';
+    properties: Record<
+      string,
+      { type: 'string' | 'number' | 'boolean' | 'integer'; description?: string }
+    >;
+    required?: string[];
+  };
+}
+
+/**
+ * 工具执行的结果。
+ *
+ * 失败**不是异常**，是一种正常结果：错误文本会被当作 `tool` 消息的 content
+ * 回喂给模型，让它看到「工具报错了」后自行纠正（见 core/agent.ts）。
+ */
+export type ToolResult =
+  | { ok: true; value: unknown }
+  | { ok: false; error: string };
 
 /**
  * 一次请求的可选参数。
@@ -76,4 +117,11 @@ export type StreamEvent =
 export interface ChatOptions {
   /** 本次请求使用的模型；不传则由 client 用它构造时的默认值 */
   model?: string;
+  /**
+   * 本次请求携带的工具声明。
+   *
+   * 空数组与不传**语义不同**：不传 = 这次不带工具；空数组在部分
+   * OpenAI 兼容实现上会 400，所以 llm 层对空数组按「不带」处理。
+   */
+  tools?: Tool[];
 }
