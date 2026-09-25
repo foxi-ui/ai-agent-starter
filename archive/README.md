@@ -21,3 +21,4 @@
 | `01-llm/how-conversation-works.html` | 一轮对话可视化 | 内容已并入 `ARCHITECTURE.md` 的「运行时数据流」 |
 | `01-llm/how-sse-works.html` | SSE 解码可视化 | 内容已在 `ARCHITECTURE.md` 步骤 4 与 spec m2 §7 |
 | `01-llm/archify/` | 上述两张图的 archify 源数据（JSON） | 图表已归档，源数据随之归档 |
+| `02-agent/2026-09-23-ai-chat-agent-design.md` | 02-agent 的**纯 CLI 版**设计 | 与现行的 `2026-09-25-ai-chat-agent-web-design.md` 回答同一个问题（这个阶段怎么设计）。仍然有效的三块 —— `ToolRegistry` 接口、三个工具的行为规格、与 ROADMAP 阶段 1 的对应 —— 已并入现 spec；其余部分被现 spec 取代 |
