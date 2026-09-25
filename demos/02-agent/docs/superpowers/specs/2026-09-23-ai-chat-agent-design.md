@@ -1,7 +1,23 @@
 # ai-chat-agent 工具调用（Tool Calling）· 设计文档
 
+> **后续进展（2026-09-25 补记）：本文档已被取代，正文保留作为历史记录。**
+>
+> 取代它的是 [`2026-09-25-ai-chat-agent-web-design.md`](2026-09-25-ai-chat-agent-web-design.md)。
+> 作废的两个原因：
+>
+> 1. **本文档描述的起点不存在了。** 它的 §2「本次范围」写着「复制 `ai-chat` 阶段一底座：
+>    `config` / `session` / `deepseek` / `repl` 骨架」—— 那是 **M1 时代的 01-llm**；
+>    而它的「明确推迟」清单同时列着「streaming（SSE 解析）」「会话持久化（JSONL 落盘、`--resume`）」
+>    「命令 `/clear` `/history` `/model` `/usage`」—— **这三样 01-llm 已经全部做完了**（M3 完成态）。
+> 2. **形态改变。** 原设计是纯 CLI 项目；新设计改为「CLI + HTTP 服务 + 浏览器聊天对话框」三段，
+>    服务端用 express、前端用 React + Vite。
+>
+> 本文档里**仍然有效**的部分（新设计已继承）：§5 的消息联合类型设计、§6 的 `ToolRegistry` 接口、
+> §7 的三个工具、§8 的 Agent 循环三兜底、§11 的错误处理表，以及 §16 的决策 D1/D2/D3/D4/D5/D6/D7/D8/D9/D10。
+> 新设计对它们的改动逐条记在新文档的 §20。
+
 - 日期：2026-09-23
-- 状态：待 review
+- 状态：**已被取代**（2026-09-25），正文不再更新
 - 范围：阶段二「LLM + Tool Calling」——自实现一个最简单的 Agent（Agent Loop + Tool Schema + Tool Registry），本地工具，非流式。
 - 前置项目：`demos/01-llm`（阶段一，非流式多轮对话），本项目的代码底座复制自它。
 
