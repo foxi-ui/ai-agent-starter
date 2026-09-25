@@ -77,10 +77,16 @@ function evaluate(expression: string): EvalResult {
     return { ok: false, reason: '表达式含不支持的字符（只允许数字、+ - * / ( ) 和空格）' };
   }
 
-  const tokens = tokenize(expression);
-  if (tokens === null || tokens.length === 0) {
+  const parsed = tokenize(expression);
+  if (parsed === null || parsed.length === 0) {
     return { ok: false, reason: '表达式无法解析' };
   }
+
+  // 上面已经把 null 排除掉了，但 TS 不会把这份收窄带进**被提升的函数声明**里：
+  // parseExpr / parseTerm / parseFactor 是 function 声明，流分析对它们一律按
+  // 声明类型 `Token[] | null` 看。这里做一次显式标注，让三个函数看到 `Token[]`。
+  // 纯类型层的事 —— 擦除后的行为与之前完全一致。
+  const tokens: Token[] = parsed;
 
   let pos = 0;
   // 失败原因单独存：递归的每个分支都返回 number | null，
