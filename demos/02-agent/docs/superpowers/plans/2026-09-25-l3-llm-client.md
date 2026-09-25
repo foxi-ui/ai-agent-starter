@@ -93,8 +93,13 @@
 
 Run（官方文档）：
 ```bash
-open https://api-docs.deepseek.com/guides/function_calling
+open https://api-docs.deepseek.com/api/create-chat-completion
 ```
+
+**注意用哪个页面**：`guides/function_calling` 那个快速开始页**没有**这些内容
+（2026-09-26 实测：它只有非流式对话示例，请求体字段只列了 `model` / `messages` / `thinking` /
+`reasoning_effort` / `stream`，通篇没有 `tools`）。四点全在 **API Reference 的
+Create Chat Completion** 页上。
 
 Expected: 四点全部确认。**在 Step 2 的 `toWireTools` 注释里写一行「已核实（日期）：……」，**
 留下核实的痕迹。
@@ -131,8 +136,11 @@ import type { ChatOptions, Message, ChatResult, FinishReason, Tool, ToolCall } f
  * 外面那层 `type: 'function'` 目前只有一种取值、纯粹是协议规定的封装。
  * 把包装收敛在这一个函数里，将来协议变了只改这里。
  *
- * **已核实（2026-09-25，对照 DeepSeek 官方 Function Calling 文档）**：
+ * **已核实（2026-09-26，对照 DeepSeek API Reference 的 Create Chat Completion 页）**：
  * 线上层级确为 `{ type: 'function', function: { name, description, parameters } }`。
+ * （另有 beta 的 `strict` 字段，我们不发。）响应侧是 `message.tool_calls`，元素含
+ * `id` / `type` / `function.name` / `function.arguments`，且 `arguments` 是 JSON **字符串**；
+ * 回喂用 `role: 'tool'` + `tool_call_id`。
  *
  * **不要图省事直接把 options.tools 发出去** —— 上游会 400 说结构不对，
  * 而报错信息里不会提到「少包了一层」。
@@ -294,9 +302,17 @@ test('content 缺失或为 null 时返回 null，而不是空串', async () => {
 });
 ```
 
-**保留不动**这 7 条：`请求体包含 model 和 messages`、`成功时返回 content，抑制 reasoning_content`、
+**保留**这 7 条：`请求体包含 model 和 messages`、`成功时返回 content，抑制 reasoning_content`、
 `非 2xx 抛出错误`、`fetch 抛错时向上冒泡，不被吞掉`、`错误体不是 JSON 时回落为原始文本`、
 `options.model 覆盖构造时的默认模型`、`不传 options.model 时回落构造时的默认模型`。
+
+⚠️ **其中 `成功时返回 content，抑制 reasoning_content` 有一条断言必须改**（本计划原先写的是
+「保留不动」，那是错的）：它断言的是 `assert.deepEqual(result, { content: '最终回答' })`，
+而新的 `ChatResult` 多了 `finish_reason` 字段（这条用例的响应没给 `finish_reason`，
+所以实际返回值是 `{ content: '最终回答', finish_reason: 'stop' }`）——
+整对象 `deepEqual` 会因为多出的键而失败。改成
+`assert.deepEqual(result, { content: '最终回答', finish_reason: 'stop' })` 即可，
+整对象断言反而更好：它同时证明了 `reasoning_content` 没被带出来。其余 6 条确实一字未动。
 
 - [ ] **Step 4: 追加新用例**
 
