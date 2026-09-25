@@ -18,7 +18,7 @@
 | 阶段目录 | 项目名 | 状态 |
 | --- | --- | --- |
 | `demos/01-llm/` | ai-chat | 进行中：M1、M2、M3（会话持久化）完成，M4–M7 待做 |
-| `demos/02-agent/` | ai-chat-agent | 重新设计完成（前后端分离 + 聊天对话框），未开始编码 |
+| `demos/02-agent/` | ai-chat-agent | 重新设计完成（monorepo：Express 服务端 + React 对话框），未开始编码 |
 | `demos/03-tools/` | — | 未开始 |
 | `demos/04-mcp/` | — | 未开始 |
 | `demos/05-rag/` | — | 未开始 |
