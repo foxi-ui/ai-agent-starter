@@ -58,6 +58,22 @@ export function foldTranscript(messages: Message[]): TranscriptItem[] {
     // system 不在 Session 里（每次请求现加），这里只是防御性地跳过
     if (message.role === 'system') continue;
 
+    // tool 消息：把结果填回它对应的那一项。
+    //
+    // **这一段必须单独正判 `role === 'tool'`**，不能靠上面的排除法「走到这里」：
+    // `Message` 的第一个成员是 `{ role: 'system' | 'user' }`，它的判别属性**本身是个联合**，
+    // 排除掉 user 之后 TS 无法把那个成员从联合里消去（负向收窄表达不了），
+    // 于是 `message.tool_call_id` 报 TS2339 —— 而运行期完全正常（类型会被擦除）。
+    if (message.role === 'tool') {
+      const index = pending.get(message.tool_call_id);
+      if (index === undefined) continue; // 找不到调用单的孤儿 tool 消息，忽略
+      const existing = items[index];
+      if (!existing || existing.kind !== 'tool') continue;
+      items[index] = { ...existing, ok: isJson(message.content), result: message.content };
+      pending.delete(message.tool_call_id);
+      continue;
+    }
+
     if (message.role === 'user') {
       items.push({ kind: 'user', text: message.content });
       continue;
@@ -80,14 +96,6 @@ export function foldTranscript(messages: Message[]): TranscriptItem[] {
       }
       continue;
     }
-
-    // tool 消息：把结果填回它对应的那一项
-    const index = pending.get(message.tool_call_id);
-    if (index === undefined) continue; // 找不到调用单的孤儿 tool 消息，忽略
-    const existing = items[index];
-    if (!existing || existing.kind !== 'tool') continue;
-    items[index] = { ...existing, ok: isJson(message.content), result: message.content };
-    pending.delete(message.tool_call_id);
   }
 
   return items;

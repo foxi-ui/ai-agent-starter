@@ -10,6 +10,10 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
+    // 值导入一律带 .ts / .tsx 后缀（与服务端同一套写法）。没有这一行，
+    // 那 8 处值导入会全部报 TS5097 —— 而 import type 被豁免，所以只有一半会红。
+    // 它要求 noEmit（或 emitDeclarationOnly），本文件正好开着 noEmit。
+    "allowImportingTsExtensions": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,

@@ -19,6 +19,16 @@ import type { SessionRegistry } from '@/http/session-registry.ts';
 import type { ToolRegistry } from '@/core/tool-registry.ts';
 import type { LLMClient } from '@/llm/client.ts';
 
+/**
+ * 两个会话路由的路径参数。
+ *
+ * express 5 的 `ParamsDictionary` 是 `{[key: string]: string | string[]}` ——
+ * 因为同一个参数可以重复出现（`/a/:b+`），那时拿到的是数组。
+ * 本项目只有 `:id` 这一个单值参数，所以在这里显式收窄成 `string`，
+ * 而不是在每个用到的地方写一次类型断言。
+ */
+type SessionParams = { id: string };
+
 export interface AppDeps {
   client: LLMClient;
   registry: ToolRegistry;
@@ -52,7 +62,7 @@ export function createApp(deps: AppDeps): Express {
     res.status(201).json({ sessionId: id, model: session.model });
   });
 
-  app.post(sessionPath, async (req: Request, res: Response) => {
+  app.post(sessionPath, async (req: Request<SessionParams>, res: Response) => {
     // express 5 在没有 `content-type: application/json` 时不给 req.body 兜底成 {}，
     // 而是留成 undefined —— 直接取 .message 会抛 TypeError 变成 500。
     // 所以这里必须先判 undefined 再判类型（spec §11 的 4→5 陷阱之一）。
@@ -92,7 +102,7 @@ export function createApp(deps: AppDeps): Express {
     }
   });
 
-  app.get(sessionPath, (req: Request, res: Response) => {
+  app.get(sessionPath, (req: Request<SessionParams>, res: Response) => {
     const sessionId = req.params.id;
     const session = deps.sessions.get(sessionId);
     if (!session) {

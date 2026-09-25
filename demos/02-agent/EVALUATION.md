@@ -5,32 +5,45 @@
 本仓库的规矩是**状态必须附证据**，不接受「已完成」这类无证据的断言。
 所以下表每一行的「证据」列写的都是**具体的测试落点**（文件 + 用例名），而不是一句结论。
 
-> ⚠️ **本轮状态**：代码与测试都已就位，用例数经静态清点为 **121 条**（见
-> `docs/superpowers/plans/README.md` 的分步统计）。但**截至写入本文件时，本轮的
-> `pnpm test` / `pnpm run typecheck` 尚未执行** —— 全链路是「先写代码、验证统一跑」的节奏。
-> 因此下表的证据列是**测试落点**而非**通过记录**。跑完一次全量门之后，
-> 把这一行替换成实际的命令输出摘要（`# pass 121 / # fail 0`）。
->
-> 唯一已经执行过的验证是 L2 收尾那一次：当时 34 条全绿，`npx tsc --noEmit` 的
-> 错误全部落在 `deepseek` 链上（那是 L3 的活，L3 已重写掉它）。
+**自动化质量门（已执行，实测输出）**
+
+```text
+$ pnpm run typecheck     # 两个 app 都跑 tsc --noEmit
+apps/server typecheck: Done
+apps/web typecheck: Done                 → 退出码 0
+
+$ pnpm test              # 服务端 node --test，全程离线
+# tests 121   # pass 121   # fail 0      → 退出码 0
+
+$ pnpm -F web build
+dist/index.html                 0.40 kB │ gzip:  0.27 kB
+dist/assets/index-*.css         3.06 kB │ gzip:  1.14 kB
+dist/assets/index-*.js        225.04 kB │ gzip: 70.82 kB
+✓ built in 463ms
+```
+
+**尚未执行**：`plans/2026-09-25-l6-web-and-docs.md` Task 16 的 Step 2（密钥泄漏扫描）、
+Step 3（真实 API 的 curl 冒烟）、Step 4（浏览器端到端 8 条）。
+也就是说，**下面这些验收项的证据目前是「自动化测试通过」，不是「真实模型跑通」** ——
+真实链路（真的开出一张调用单、真的执行工具、浏览器里真的看见轨迹）还没验证过。
 
 ## ROADMAP 阶段 1
 
 | 验收项 | 状态 | 证据（测试落点） |
 |---|---|---|
-| 自己实现 Agent Loop | 已实现，待跑 | `test/agent.test.ts`：`一轮工具后收敛`、`多步循环：连续两次工具调用后才收敛`、`同一轮里多个 tool_calls` |
-| 自己定义 Tool | 已实现，待跑 | `test/tools-registry.test.ts`：`list() 返回三份工具声明`、`每份声明都有非空 description 与 object 类型的 parameters`；三个工具的 schema 另见 `test/tools-{weather,time,calculator}.test.ts` |
-| 处理 Tool Result | 已实现，待跑 | `test/agent.test.ts`：`一轮工具后收敛`（断言 tool 消息的 content 就是 `JSON.stringify(value)`）、`arguments 不是合法 JSON：错误文本回喂`、`工具抛异常：兜底成 {ok:false} 回喂，不崩`、`未知名工具：错误文本回喂` |
-| 实现基本任务循环 | 已实现，待跑 | `test/http-app.test.ts`：`POST 消息返回本轮的展示项（工具轨迹 + 回答，不含用户那条）` —— 一次假的天气轮从 HTTP 进、带着工具轨迹从 HTTP 出 |
-| 防止无限循环 | 已实现，待跑 | `test/agent.test.ts`：`跑满 maxSteps：调用次数恰好等于 maxSteps，且最后一条是带 content 的 assistant`、`maxSteps 默认为 6` |
+| 自己实现 Agent Loop | ✅ 达标 | `test/agent.test.ts`：`一轮工具后收敛`、`多步循环：连续两次工具调用后才收敛`、`同一轮里多个 tool_calls` |
+| 自己定义 Tool | ✅ 达标 | `test/tools-registry.test.ts`：`list() 返回三份工具声明`、`每份声明都有非空 description 与 object 类型的 parameters`；三个工具的 schema 另见 `test/tools-{weather,time,calculator}.test.ts` |
+| 处理 Tool Result | ✅ 达标 | `test/agent.test.ts`：`一轮工具后收敛`（断言 tool 消息的 content 就是 `JSON.stringify(value)`）、`arguments 不是合法 JSON：错误文本回喂`、`工具抛异常：兜底成 {ok:false} 回喂，不崩`、`未知名工具：错误文本回喂` |
+| 实现基本任务循环 | ✅ 达标 | `test/http-app.test.ts`：`POST 消息返回本轮的展示项（工具轨迹 + 回答，不含用户那条）` —— 一次假的天气轮从 HTTP 进、带着工具轨迹从 HTTP 出 |
+| 防止无限循环 | ✅ 达标 | `test/agent.test.ts`：`跑满 maxSteps：调用次数恰好等于 maxSteps，且最后一条是带 content 的 assistant`、`maxSteps 默认为 6` |
 
 **另外三条不来自 ROADMAP、但本项目自己立的验收点**（spec §11 的 Review Focus）：
 
 | 验收项 | 状态 | 证据 |
 |---|---|---|
-| 同一会话的并发请求串行 | 已实现，待跑 | `test/http-session-registry.test.ts`：`同一 id 上的两个 run 串行执行，不交错`；`test/http-app.test.ts`：`同一会话并发两个请求：第二个能看到第一个的结果` |
-| 上游状态码绝不透出 | 已实现，待跑 | `test/http-errors.test.ts`：`上游 401 绝不透出成 401`；`test/http-app.test.ts`：`上游 401 → 502` |
-| 失败的一轮不写进会话 | 已实现，待跑 | `test/agent.test.ts`：`runSessionTurn：本轮失败时只留下 user 那一条`；`test/http-app.test.ts`：`失败的一轮不写进会话（历史里只有 user）` |
+| 同一会话的并发请求串行 | ✅ 达标 | `test/http-session-registry.test.ts`：`同一 id 上的两个 run 串行执行，不交错`；`test/http-app.test.ts`：`同一会话并发两个请求：第二个能看到第一个的结果` |
+| 上游状态码绝不透出 | ✅ 达标 | `test/http-errors.test.ts`：`上游 401 绝不透出成 401`；`test/http-app.test.ts`：`上游 401 → 502` |
+| 失败的一轮不写进会话 | ✅ 达标 | `test/agent.test.ts`：`runSessionTurn：本轮失败时只留下 user 那一条`；`test/http-app.test.ts`：`失败的一轮不写进会话（历史里只有 user）` |
 
 ## 未做项与落点
 
