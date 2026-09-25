@@ -54,14 +54,24 @@ AI 与人都靠「这个问题该去哪份文档找」来导航。一份文档�
 
 新阶段项目**继承**这些约束，不要重新发明。当前唯一有代码的阶段是 `demos/01-llm/`，它的 `README.md` 与 `ARCHITECTURE.md` 是这些约束的详细出处。
 
-- **Node ≥ 22**，依赖原生类型擦除直接运行 `.ts`，**不引入构建步骤**
+- **Node ≥ 22**，依赖原生类型擦除直接运行 `.ts`
+- **服务端不引入构建步骤**：无打包、无转译产物，`node --import ./loader.mjs src/**.ts` 直接跑。
+  **前端是唯一的例外** —— `web/` 自带 Vite 工具链、独立 `package.json`、独立构建产物与独立
+  `pnpm install`，不进各阶段的 `pnpm test` / `tsc --noEmit` 口径（见 `demos/02-agent/web/`）
 - **不用需要「代码变换」的 TS 特性**（参数属性 / `enum` / `namespace` / 实验性装饰器）——
   原生类型擦除只做擦除不做变换。`tsc --noEmit` 对它们**放行**，只有运行时才炸
   （见 `demos/01-llm/docs/troubleshooting.md` T11）。
   判断标准：删掉所有类型标注后仍是合法 JS 的，才能用。
+  **推论**：只当类型用的导入**必须**写 `import type`，否则擦除阶段无法识别它，
+  运行时抛「does not provide an export named …」—— 同一个坑的另一个出口
 - **ESM**（`package.json` 的 `"type": "module"`）；包管理器 **pnpm**
-- **零运行时依赖**；devDependency 仅 `typescript` + `@types/node`
-- **分层单向依赖** `cli → core → llm`；`llm` / `core` 不 import `node:readline`、不写 `process.stdout` / `process.stderr`
+- **核心层零运行时依赖**：`core/` 与 `llm/` 只用 `node:` 内置模块与全局 `fetch`，禁止引入第三方包
+- **`server/` 层允许运行时依赖，且必须登记**：当前唯一一条是 `express`（配套 `@types/express`，
+  见 `demos/02-agent/DECISIONS.md`）。新增任何运行时依赖都要在本行列出并说明理由；
+  `tools/` 层维持零依赖
+- **分层单向依赖** `cli → core → llm`、`server → core → llm`、`tools → core`
+  （**`core` 不 import `tools`**）；`server` 与 `cli` **互不导入**。
+  `llm` / `core` 不 import `node:readline` / `node:fs` / `express`，也不写 `process.stdout` / `process.stderr`
 - 源码用 `@/` 指向 `src/`，且**必须配 `--import ./loader.mjs`**（原因见 troubleshooting 的 T4）
 - **密钥只经环境变量**：`.env` 是占位符模板（入库），`.env.local` 存真实值（已 gitignore）
 - **测试不依赖真实网络**；真实 API 冒烟手动单独跑，不进 `pnpm test`
@@ -83,10 +93,18 @@ pnpm run typecheck  # tsc --noEmit
 node --import ./loader.mjs --test test/<name>.test.ts
 ```
 
+有前端的阶段（当前只有 `demos/02-agent/`）多一个服务端入口；`web/` 是**独立项目**，
+要单独安装、单独启动：
+
+```bash
+pnpm start:server   # HTTP 服务端
+cd web && pnpm install && pnpm dev   # 前端 dev server
+```
+
 ## 阶段之间的关系
 
 各阶段是**复制**关系，不是共享依赖 —— 见
-`demos/02-agent/docs/superpowers/specs/2026-09-23-ai-chat-agent-design.md` 的 D1「复制底座而非修改 ai-chat」。
+`demos/02-agent/docs/superpowers/specs/2026-09-25-ai-chat-agent-web-design.md` 的 D1「复制 M3 完成态底座」。
 
 由此推出一条硬规则：
 
@@ -95,7 +113,7 @@ node --import ./loader.mjs --test test/<name>.test.ts
 
 ## 修改代码时的注意事项
 
-- 改 `package.json` 的 `start` / `test` 脚本时，**两个都要带 `--import ./loader.mjs`**，漏一个会出现「测试过但 `pnpm start` 挂」
+- 改 `package.json` 里跑 `.ts` 的脚本时（`start` / `start:server` / `test`），**每一个都要带 `--import ./loader.mjs`**，漏一个会出现「测试过但 `pnpm start` 挂」
 - **文档跟代码同一次改动一起更新**。碰到下面任一项，就要检查对应文档：
   `目录结构` → README / ARCHITECTURE；`命令` → README；`配置/环境变量` → README / DECISIONS；`依赖` → README / DECISIONS；`架构` → ARCHITECTURE / DECISIONS
 - 遇到新坑并解决后，**随手追加**一条到该阶段的 `docs/troubleshooting.md`，不要攒着
@@ -108,7 +126,7 @@ node --import ./loader.mjs --test test/<name>.test.ts
 TypeCheck: PASS / FAIL / N/A
 Lint:      N/A（本仓库未配置 linter）
 Test:      PASS / FAIL / N/A
-Build:     N/A（noEmit，Node 直接运行 .ts，无构建产物）
+Build:     N/A（noEmit，Node 直接运行 .ts，无构建产物）／前端另有 vite build
 ```
 
 另外，验证命令要**贴着改动范围**跑：先单文件 `node --import ./loader.mjs --test <file>`，再全量 `pnpm test`。
