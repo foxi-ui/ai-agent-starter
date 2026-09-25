@@ -22,3 +22,4 @@
 | `01-llm/how-sse-works.html` | SSE 解码可视化 | 内容已在 `ARCHITECTURE.md` 步骤 4 与 spec m2 §7 |
 | `01-llm/archify/` | 上述两张图的 archify 源数据（JSON） | 图表已归档，源数据随之归档 |
 | `02-agent/2026-09-23-ai-chat-agent-design.md` | 02-agent 的**纯 CLI 版**设计 | 与现行的 `2026-09-25-ai-chat-agent-web-design.md` 回答同一个问题（这个阶段怎么设计）。仍然有效的三块 —— `ToolRegistry` 接口、三个工具的行为规格、与 ROADMAP 阶段 1 的对应 —— 已并入现 spec；其余部分被现 spec 取代 |
+| `02-agent/2026-09-25-tool-calling-agent.md` | 02-agent 的**单一总计划**（5062 行 / 15 个 Task） | 已拆成 `demos/02-agent/docs/superpowers/plans/` 下的 6 份渐进步骤 + 一份索引。拆分不是纯粹切分：工具层提到了 LLM 层之前、并新增了垂直切片那一步，**顺序与任务编号都已改变**，所以它不再是可照做的计划。任务编号对照：T1–T2 → L1 的 Task 1–2；**T4 → L2 的 Task 3**（工具层被提到了 LLM 层之前）；T3 → L3 的 Task 5；T5–T6 → L4 的 Task 6–7；T7–T10 → L5 的 Task 8–11；T11–T15 → L6 的 Task 12–16。L2 的 Task 4（垂直切片）在本文件里**没有对应物**，是拆分时新增的 |
