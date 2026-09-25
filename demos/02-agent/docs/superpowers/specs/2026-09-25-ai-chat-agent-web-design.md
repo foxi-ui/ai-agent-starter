@@ -1,34 +1,38 @@
-# ai-chat-agent · 前后端分离改造（monorepo）· 设计文档
+# ai-chat-agent · Tool Calling / Agent Loop · 设计文档
 
 - 日期：2026-09-25
 - 状态：待 review
 - 范围：阶段二「LLM + Tool Calling」——一个 pnpm monorepo 里的两个应用：
   **Express 服务端**（内含自实现的 Agent）与 **React 聊天前端**。工具本地、非流式。
-- 前置项目：`demos/01-llm`（阶段一，M1–M3 完成态）。本项目**复制它的 4 个文件**作为起点，其余全部新写。
-- 被取代的文档：`2026-09-23-ai-chat-agent-design.md`（纯 CLI 版，已作废，正文保留作为历史记录）。
+- 前置项目：`demos/01-llm`（阶段一，M1–M3 完成态）。本项目**复制它的 4 个文件**作为起点，
+  其余全部新写（见 D1）。阶段之间是复制关系、不是共享依赖，**旧阶段只读不改**。
 
 ---
 
 ## 1. 背景与目标
 
-### 1.1 为什么要重新设计
+### 1.1 本阶段学什么
 
-原设计（2026-09-23）把阶段二定义为一个**纯 CLI** 项目，且它「复制底座」时复制的是 **M1 时代的 01-llm** ——
-它的「明确推迟」清单里写着「streaming」「会话持久化」「命令」，**这三样 01-llm 现在已经全部做完了**。
-也就是说，原设计描述的起点已经不存在了。
+对应 `docs/ROADMAP.md` 的阶段 1「第一个 Agent」，学习内容是 **Tool Calling / Agent Loop / State**。
+ROADMAP 给这个阶段定的验收项是五条 —— 自己实现 Agent Loop、自己定义 Tool、处理 Tool Result、
+实现基本任务循环、防止无限循环 —— 本文档就是这五条的设计。
 
-用户随后提出三条改造要求，逐条改变了这份设计的形状：
+不使用 LangChain 一类的框架，Agent 循环自己写：本阶段要买的正是这个循环的经验。
 
-1. **要有前端聊天对话框、分前后端**，服务端用 express；对话框前期只做简单输入展示，先把 Agent 流程打通
-2. **别留 CLI** —— 它拖进来的 readline、stdout/stderr 分流、JSONL 落盘与格式升级全是**阶段一已经学过的题目**，
-   与本阶段的 Tool Calling / Agent Loop 无关，却让最精细、最容易写错的一整块（会话日志格式升级）重新出现
-3. **别让展示层与 agent 层交汇太多** —— 原设计里 `core/agent.ts` 返回的 `ToolStep` 带着 `index` 与 `ms`
-   两个纯为界面服务的字段（`ms` 甚至是「唯一非确定字段，测试不得断言」），`core/transcript.ts` 的
-   `TranscriptItem` 是个视图模型却住在 core。**agent 层的输出形状被 UI 需求塑形了。**
+### 1.2 三条形态约束
 
-第 3 条催生了本次最重要的结构决定：**agent 层只产出事实，展示项一律由外层投影**（见 D4 与 §8）。
+项目的形态由三条约束决定，它们逐条塑造了后面各节：
 
-### 1.2 目标
+1. **前端要有聊天对话框，前后端分离**，服务端用 express。
+   对话框前期只做简单输入展示，先把 Agent 流程打通。
+2. **不做 CLI。** readline 交互、stdout/stderr 分流、会话日志格式升级都是**阶段一已经学过的题目**，
+   与本阶段的 Tool Calling / Agent Loop 无关。见 D2、D3。
+3. **展示层与 agent 层不交汇。** `core/` 里不许出现任何为了界面存在的字段 ——
+   判断标准：删掉这个字段，浏览器上的东西会不会少一块？会，它就属于 `presentation/`。
+
+第 3 条是本设计最重要的结构决定：**agent 层只产出事实，展示项一律由外层投影**（见 D4 与 §9）。
+
+### 1.3 目标
 
 以天气为例，端到端跑通：
 
@@ -215,7 +219,7 @@ interface ChatResult {
   finish_reason: FinishReason;
 }
 
-/** 工具的**声明** —— 发给模型看的那份说明，不是实现。**扁平形状**，见 §9 */
+/** 工具的**声明** —— 发给模型看的那份说明，不是实现。**扁平形状**，见 §10 */
 interface Tool {
   name: string;
   description: string;
@@ -261,7 +265,66 @@ interface LLMClient {
 
 ---
 
-## 6. 会话状态（`core/session.ts`）
+## 6. 工具层（`core/tool-registry.ts` + `tools/`）
+
+`Tool` 是**声明**（发给模型看的那份说明），还需要有人把它和**实现**绑在一起、按名派发。
+这一层就是这个绑定。
+
+### 接口（`core/tool-registry.ts`）
+
+```ts
+/** 一个工具：声明 + 实现 */
+export interface ToolDefinition {
+  declaration: Tool;
+  /** 执行工具。`args` 是模型给的、已解析的参数，形状不可信（见下） */
+  run(args: unknown): ToolResult | Promise<ToolResult>;
+}
+
+/** 工具注册表：core 只认这个接口 */
+export interface ToolRegistry {
+  list(): Tool[];                                              // 序列化成请求里的 tools
+  execute(name: string, args: unknown): Promise<ToolResult>;   // 按名派发
+}
+```
+
+**接口在 `core/`、实现在 `tools/`**，与 `LLMClient` 是同一个套路：调用方只认接口，
+于是 `core` 不必 import 任何具体工具，测试也能塞一个假注册表进来。
+
+`declaration` 与 `run` **放同一个对象里是刻意的** —— 声明说错一个参数名，模型就会传错参数，
+而这两半分居两地时最容易写歪的正是它们的一致性。
+
+`execute` 的契约：**名字不存在时返回 `{ok:false}`，不抛错**。真抛了也不致命，
+调用方（`core/agent.ts`）会兜底成 `{ok:false}` 回喂模型。
+
+MCP-ready：将来接入 MCP 时只给 `tools/registry.ts` 的实现加一个 `mount()`，
+这个接口不用动，`core` 与 `llm` 更不用动。
+
+### 三个工具（`tools/`）
+
+| 文件 | 工具 | 参数 | 行为 |
+|---|---|---|---|
+| `weather.ts` | `weather` | `{ city: string }` | 确定性 mock：内置小表（Beijing `25°C, Sunny`、Shanghai、Shenzhen、Hangzhou、Chengdu），键为小写城市名；命中返回对应值，**未命中返回固定兜底值并在 `note` 里注明「模拟数据」** —— 否则模型会把编出来的天气当事实转述给用户。无网络、无 key |
+| `time.ts` | `get_time` | 无（`properties: {}`、无 `required`） | 返回 `{ now: <ISO 字符串> }`。**不纯**（每次调用结果不同），测试只断言格式不断言值 |
+| `calculator.ts` | `calculator` | `{ expression: string }` | 只支持 `+ - * / ( )` 与数字。先正则白名单校验，再用受限算术求值器求值（**不用 `eval` / `new Function`**）。错误文本必须含表达式原文 |
+
+**为什么 weather 用内置小表**：本阶段的学习目标是 tool calling 这条链路本身（模型怎么开调用单、
+程序怎么执行、结果怎么回喂），不是「怎么调第三方天气 API」。用一张小表把网络这个变量消掉，
+失败原因才能收敛到链路自己身上。
+
+`tools/registry.ts` 的 `createToolRegistry()` 把三者注册进 `Map`，
+`list()` **每次返回新数组**（调用方可能改它）。
+
+### 参数校验是工具自己的责任
+
+`run(args)` 收到的 `args` 来自模型的 JSON 字符串，**形状完全不可信** ——
+模型可能传字符串、传 `null`、干脆不传。校验不过一律返回 `{ok:false, error}`，
+让它作为 `tool` 消息回喂给模型自己改（见 §8 的循环体）。
+
+三个工具都不碰网络、不碰文件系统（`get_time` 读系统时钟，但不因此需要任何外部依赖），可离线单测。
+
+---
+
+## 7. 会话状态（`core/session.ts`）
 
 ```ts
 class Session {
@@ -277,12 +340,12 @@ class Session {
 }
 ```
 
-相对 01-llm **删掉**了三样（见 D6）：
+01-llm 的 `Session` 有三样**不复制过来**（见 D6）：
 
-| 删掉的 | 为什么 |
+| 不复制 | 为什么 |
 |---|---|
-| `onChange` 变更广播 + `SessionOptions` | 它的唯一用途是落盘，而本次不做持久化 |
-| `clear()` | 唯一调用方是 `/clear` 命令，CLI 已砍 |
+| `onChange` 变更广播 + `SessionOptions` | 它的唯一用途是落盘，而本项目不做持久化（D3） |
+| `clear()` | 唯一调用方是 `/clear` 命令，而本项目不做 CLI（D2） |
 | `set model` / 构造时的 `history` 参数 | 没有 `/model` 命令，也没有恢复会话的入口 |
 
 `append` 的 `role` **收窄成 `'system' \| 'user'`**，这是刻意的类型级防线：
@@ -295,7 +358,7 @@ assistant 消息可能带 `tool_calls`、tool 消息必须带 `tool_call_id`，�
 
 ---
 
-## 7. Agent 循环（`core/agent.ts`）
+## 8. Agent 循环（`core/agent.ts`）
 
 ```ts
 interface AgentTurn {
@@ -321,8 +384,8 @@ async function runSessionTurn(
 ```
 
 **注意这里没有 `steps`。** 本轮调了哪些工具、传了什么参、成没成功 —— 全部可以从 `added` 推导，
-而推导逻辑只有一份，在 `presentation/` 里（§8）。agent 层只负责「发生了什么」，
-不负责「怎么给人看」。这是本次相对原设计最重要的一处收窄。
+而推导逻辑只有一份，在 `presentation/` 里（§9）。agent 层只负责「发生了什么」，
+不负责「怎么给人看」（见 D4）。
 
 ### 循环体
 
@@ -368,16 +431,15 @@ session.appendAll(added)                                          # 必须在「
 - `append('user')` 若放在 `toMessages()` 之后，用户这句话根本没发出去
 - `appendAll(added)` 若不放在成功之后，失败轮次会留下**伪造的 assistant 回答**（01-llm 的 D7）
 
-原设计抽这一层的理由是「两个入口各写一遍就是两次写反的机会」。**现在只有一个入口了，
-理由换了一层**：HTTP 路由的职责是状态码与 JSON 形状，不是对话时序。
+抽这一层的理由：上面三行**顺序是语义**，而 HTTP 路由的职责是状态码与 JSON 形状，不是对话时序。
 把三行顺序敏感的语句内联进 async handler，是把 agent 语义和 HTTP 语义搅在一起 ——
-这恰恰是本次要修的那类问题。
+写反了不会报错，只会静默丢消息或留下伪造的回答。
 
 `runSessionTurn` 内部自己读 `session.model` 传给 client，路由不需要知道模型这回事。
 
 ---
 
-## 8. 展示投影（`presentation/transcript.ts`）
+## 9. 展示投影（`presentation/transcript.ts`）
 
 ```ts
 type TranscriptItem =
@@ -402,7 +464,7 @@ function foldTranscript(messages: Message[]): TranscriptItem[];
 - `tool` 消息按 `tool_call_id` 把结果填回对应的那一项，`ok` 由**结果是不是合法 JSON** 判定
 
 **「结果是不是合法 JSON」这个判据的依据是一个不变量**：成功路径的结果一定经过
-`JSON.stringify`（见 §7 的 `toToolContent`），所以一定是合法 JSON；失败路径回的是人写的错误文本，
+`JSON.stringify`（见 §8 的 `toToolContent`），所以一定是合法 JSON；失败路径回的是人写的错误文本，
 解析必然失败。之所以要这样反推而不是在消息里存一个标记位 —— `Message` 是发给 API 的线格式，
 多一个字段就是给上游发未知字段。
 
@@ -417,13 +479,12 @@ function foldTranscript(messages: Message[]): TranscriptItem[];
 | `POST /api/sessions/:id/messages` | **本轮**新增的展示项（工具轨迹 + 最终回答，不含用户那条） | `foldTranscript(turn.added)` |
 | `GET /api/sessions/:id/messages` | **整段**会话的展示项（user + tool + assistant） | `foldTranscript(session.history())` |
 
-同一个函数、同一种类型，只差范围。这就是把展示投影收进一层的直接收益 ——
-原设计里 POST 返回 `steps`（一个 `ToolStep` 数组）、GET 返回 `messages`（`Message` 数组），
-前端要写两套渲染逻辑。
+同一个函数、同一种类型，只差范围。若两个接口各自返回不同形状（POST 返回一个工具步骤数组、
+GET 返回 `Message[]`），前端就得写两套渲染逻辑，且两套迟早不一致。
 
 ---
 
-## 9. LLM 层（`llm/deepseek.ts`）
+## 10. LLM 层（`llm/deepseek.ts`）
 
 `chat()` 的三处改动：
 
@@ -444,14 +505,14 @@ function foldTranscript(messages: Message[]): TranscriptItem[];
 不校验的后果是 `tool_call_id: undefined`，`JSON.stringify` 时键被丢掉，下一轮请求 400，
 而报错信息完全不指向真正的原因。
 
-### 删掉的东西
+### 不复制过来的东西
 
-`chatStream`、`readWithIdleTimeout`、`STREAM_IDLE_TIMEOUT_MS`、`llm/sse.ts` 全部删除（见 D5）。
+`chatStream`、`readWithIdleTimeout`、`STREAM_IDLE_TIMEOUT_MS`、`llm/sse.ts` 都不从 01-llm 复制过来（见 D5）。
 `ReasoningContent` 的抑制逻辑（不读 `reasoning_content`）保留在注释里 —— 它是一条仍然成立的取舍。
 
 ---
 
-## 10. HTTP 层（`http/`）
+## 11. HTTP 层（`http/`）
 
 ### 接口
 
@@ -515,7 +576,7 @@ GET  /api/sessions/:id/messages
 
 ---
 
-## 11. 前端（`apps/web`）
+## 12. 前端（`apps/web`）
 
 ### 项目形态
 
@@ -554,7 +615,7 @@ GET  /api/sessions/:id/messages
 
 ---
 
-## 12. 错误处理
+## 13. 错误处理
 
 | 场景 | 行为 |
 |---|---|
@@ -571,7 +632,7 @@ GET  /api/sessions/:id/messages
 
 ---
 
-## 13. 测试策略（全部离线）
+## 14. 测试策略（全部离线）
 
 | 文件 | 关键用例 |
 |---|---|
@@ -592,7 +653,7 @@ GET  /api/sessions/:id/messages
 
 ---
 
-## 14. 工具链
+## 15. 工具链
 
 - Node ≥ 22 原生类型擦除直接运行：`node --import ./loader.mjs src/main.ts`
 - TypeCheck：`tsc --noEmit`
@@ -612,16 +673,16 @@ pnpm run typecheck    # 两个 app 都跑 tsc --noEmit
 
 ---
 
-## 15. 需在实施时核实的一点
+## 16. 需在实施时核实的一点
 
 DeepSeek 工具调用遵循 OpenAI 兼容格式（`tools` 数组 + `message.tool_calls` + `finish_reason:"tool_calls"`，
 `arguments` 为 JSON 字符串）。`demos/01-llm/docs/deepseek-api-facts.md` 已确认 `tool` 角色与
 `tool_calls` finish_reason 存在；实施时**对照 DeepSeek 官方文档再核一遍确切字段名**，
-尤其确认 `tools` 数组元素的包装层级是不是 `{type:'function', function:{…}}`（§9 的 `toWireTools`）。
+尤其确认 `tools` 数组元素的包装层级是不是 `{type:'function', function:{…}}`（§10 的 `toWireTools`）。
 
 ---
 
-## 16. 验收
+## 17. 验收
 
 - TypeCheck：`pnpm run typecheck` 通过（两个 app）
 - Test：`pnpm test` 全绿
@@ -633,29 +694,31 @@ DeepSeek 工具调用遵循 OpenAI 兼容格式（`tools` 数组 + `message.tool
 
 ---
 
-## 17. 设计决策（待写入 DECISIONS.md，独立编号）
+## 18. 设计决策（待写入 DECISIONS.md，独立编号）
 
-- **D1 复制范围收窄到 4 个文件** —— 只复制 `core/types.ts`、`core/session.ts`、`llm/client.ts`、
-  `llm/deepseek.ts` 作为起点，其余全部新写。放弃「复制整个 M3 底座」：那会把阶段一已学过的
-  readline、stdout/stderr 分流、JSONL 落盘一并拖进来。
-- **D2 砍掉 CLI 入口** —— CLI 买不到任何与 Tool Calling / Agent Loop 相关的东西，
+- **D1 复制而非共享依赖** —— 阶段之间是**复制**关系，不是共享依赖；**旧阶段只读不改**。
+  若某个改动需要同时改两个阶段，说明该抽共享包了 —— 先把判断写进对应阶段的 `DECISIONS.md` 再动手。
+  复制范围限定为 4 个文件：`core/types.ts`、`core/session.ts`、`llm/client.ts`、`llm/deepseek.ts`，
+  其余全部新写。整份复制 M3 底座会把阶段一已学过的 readline、stdout/stderr 分流、
+  JSONL 落盘一并拖进来，那些与本阶段的 Tool Calling 无关。
+- **D2 不做 CLI 入口** —— CLI 买不到任何与 Tool Calling / Agent Loop 相关的东西，
   它买的是阶段一已经买过的经验。代价：失去终端调试器（`curl` 可替代）与「一套 core 换两种前端」
   的演示（`test/agent.test.ts` 已离线证明 core 不依赖任何入口）。
-- **D3 砍掉会话持久化** —— 随 CLI 一起消失。直接收益：会话日志格式升级（`SessionChange` 承载
+- **D3 不做会话持久化** —— 与 D2 同源。直接收益：会话日志格式升级（`SessionChange` 承载
   tool 消息、`parseRecord` 白名单、老 `.jsonl` 字节级兼容）**根本不需要做**，
   连带四条风险（`parseRecord` 写 `undefined` 键、`/history` 遇到 `content: null` 崩溃、
   `SYSTEM_PROMPT` 把 `node:readline` 拖进服务端、老文件兼容）一起消失。
   代价：刷新页面靠服务端内存，重启即丢。
-- **D4 agent 层只产出事实，展示投影全在外层** —— `runAgentTurn` 只返回 `{final, added, stopReason}`，
-  不再返回 `ToolStep`；`TranscriptItem` 从 core 移到 `presentation/`。
-  放弃原设计的 `steps`（它带着 `index` 与 `ms` 两个纯为界面存在的字段，
-  `ms` 甚至是「唯一非确定字段，测试不得断言」）。代价：界面分不出「参数非法」与「工具失败」——
-  两者的错误文本本身就写着原因，用户信息没有损失。
-- **D5 砍掉 SSE / `chatStream` / `sse.ts` / `StreamEvent`** —— 与 D8 是同一条理由：
-  无入口的代码会变成下个里程碑的既成事实。下个里程碑做「流式 + 工具」时，
-  分片 `tool_calls` 拼接本来就要另写一套，留着只是重写前的负担。
-- **D6 `Session` 退回纯类** —— 删掉 `onChange` / `clear()` / `set model` / 构造时的 `history` 参数。
-  它们各自的唯一消费者（落盘、`/clear`、`/model`、`--resume`）随 CLI 与持久化一起消失。
+- **D4 agent 层只产出事实，展示投影全在外层** —— `runAgentTurn` 只返回 `{final, added, stopReason}`；
+  `TranscriptItem` 放在 `presentation/` 而不是 `core/`。core 里若保留一个带 `index` 与 `ms`
+  的步骤结构，`ms` 会变成「唯一非确定字段，测试不得断言」—— agent 层的输出形状就被 UI 塑形了。
+  代价：界面分不出「参数非法」与「工具失败」—— 两者的错误文本本身就写着原因，用户信息没有损失。
+- **D5 不做 SSE / `chatStream` / `sse.ts` / `StreamEvent`** —— 无入口的代码会变成下个里程碑的
+  既成事实。下个里程碑做「流式 + 工具」时，分片 `tool_calls` 拼接本来就要另写一套，
+  留着只是重写前的负担。
+- **D6 `Session` 保持纯类** —— 只留 `append` / `appendMessage` / `appendAll` / `toMessages` / `history`。
+  01-llm 的 `onChange` / `clear()` / `set model` / 构造时的 `history` 参数不复制过来 ——
+  它们各自的唯一消费者是落盘、`/clear`、`/model`、`--resume`，本项目都不做（见 D2、D3）。
 - **D7 循环条件看 `tool_calls`、不看 `finish_reason`** —— 部分服务端会在 `stop` 的同时返回 `tool_calls`。
 - **D8 工具失败回喂模型而非崩溃**。
 - **D9 `maxSteps` 防死循环**（默认 6）；跑满时追加的最后一条必须是带 `content` 的 assistant。
@@ -671,8 +734,9 @@ DeepSeek 工具调用遵循 OpenAI 兼容格式（`tools` 数组 + `message.tool
   还没有值得抽 `packages/` 的第三份共享代码；真正的守卫是服务端测试里的键断言。
 - **D16 会话 Map 用 FIFO 上限 100** —— 淘汰代价为零。
 - **D17 只监听 `127.0.0.1`，不做鉴权与 CORS 白名单** —— 本机开发工具，不是可暴露的服务。
-- **D18 展示投影只定义一次** —— 实时与历史两条路径共用 `foldTranscript`，
-  前端只需要一套渲染逻辑。放弃「POST 返回 steps、GET 返回 messages」的两套形状。
+- **D18 展示投影只定义一次** —— 实时与历史两条路径共用 `foldTranscript`，前端只需要一套渲染逻辑。
+  若两个接口各自返回不同形状（一个工具步骤数组、一个 `Message[]`），前端要写两套渲染逻辑，
+  且两套迟早不一致。
 - **D19 仍非流式**；**D20 不自动重试**（对齐 01-llm 的 D5）。
 - **D21 阶段目录用 pnpm workspace（monorepo）而不是「根即服务端」** ——
   后者会让 `demos/02-agent/package.json` 既当阶段根又当服务端，`src/` 与 `web/` 的地位看不出区别。

@@ -1,14 +1,14 @@
-# ai-chat-agent 前后端分离改造（monorepo）Implementation Plan
+# ai-chat-agent · Tool Calling / Agent Loop Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在 `demos/02-agent/` 建一个 pnpm monorepo，`apps/server` 是内含自实现 Agent 的 Express 服务端，`apps/web` 是能看到工具调用轨迹的 React 聊天前端。
+**Goal:** 在 `demos/02-agent/` 建一个 pnpm monorepo：`apps/server` 是内含**自实现 Agent 循环**的 Express 服务端，`apps/web` 是能看到**工具调用轨迹**的 React 聊天前端。
 
-**Architecture:** 服务端内部分 `http → presentation → core → llm` 四层单向依赖，`tools → core`。`core/agent.ts` 的 `runAgentTurn` 只产出**事实**（`final` / `added` / `stopReason`），展示项一律由 `presentation/transcript.ts` 从 `added` 或 `history()` 投影 —— 这是本次相对上一版设计最重要的一处收窄。前端只认 HTTP 契约，`vite.config.ts` 的 proxy 把 `/api` 反代到服务端，因此不需要 CORS。
+**Architecture:** 服务端内部 `http → presentation → core → llm` 四层单向依赖，另有 `tools → core`。`core/agent.ts` 的 `runAgentTurn` 只产出**事实**（`final` / `added` / `stopReason`），展示项一律由 `presentation/transcript.ts` 从 `added` 或 `history()` 投影 —— 这是本项目最重要的一处结构决定（spec §1.2 第 3 条 / D4）。前端只认 HTTP 契约，`vite.config.ts` 的 proxy 把 `/api` 反代到服务端，因此不需要 CORS。
 
 **Tech Stack:** Node 22（原生 TS 类型擦除，服务端无构建步骤）、pnpm workspace、`node --test`、express 5；`apps/web` 是 React 19 + Vite 8 的独立工具链。
 
-**Spec:** `demos/02-agent/docs/superpowers/specs/2026-09-25-ai-chat-agent-web-design.md`（本计划实现其全部内容）
+**Spec:** `demos/02-agent/docs/superpowers/specs/2026-09-25-ai-chat-agent-web-design.md`（本计划实现其全部 18 节）
 
 ## Global Constraints
 
@@ -32,20 +32,24 @@
 - **密钥只经环境变量**：`.env` 是占位符模板（入库），`.env.local` 存真实值（已 gitignore）
 - **测试不依赖真实网络**；真实 API 冒烟手动单独跑，不进 `pnpm test`
 - **不在 `test/` 下放非 `*.test.ts` 的文件**（裸 `node --test` 会匹配到它，静默撑大用例数）
-- **每次提交前**：`pnpm run typecheck` 与 `pnpm test` 都必须绿
+- **每次提交前**：`pnpm run typecheck` 与 `pnpm test` 都必须绿。
+  **唯一例外是 Task 1 与 Task 2**：它们是「先把起点搬进来、再逐步改造」的中间态，
+  结束时 typecheck 必然带着 3 条 TS2307（见 Task 1 Step 6）。**从 Task 3 起这条约束严格生效。**
+  不要为了让它提前变绿而把 T2/T3 的改动提前混进 T1。
 
-## 起点状态（已实测）
+## 起点状态（已实测 2026-09-25）
 
 ```text
-工作目录       demos/02-agent/（当前只有 docs/，无 package.json、无源码）→ 本计划 T1 建 monorepo
-基线仓库       demos/01-llm/    M1–M3 完成态，11 个测试文件 167 个用例全绿
+工作目录       demos/02-agent/ —— 只有 docs/，无 package.json、无源码
+               → 本计划 Task 1 建 monorepo
+基线仓库       demos/01-llm/    M1–M3 完成态，实测 167 个用例全绿（duration 1273ms）
+复制来源       01-llm 的 4 个文件：core/types.ts、core/session.ts、llm/client.ts、llm/deepseek.ts
 Node           v22.23.2
 pnpm           10.34.5
 express        5.2.1（要装的运行时依赖）
 @types/express 5.0.6
 react          19.3.0 / vite 8.3.1
 git 分支       main（无 remote，直接在 main 上提交）
-工作区         干净（spec 与 AGENTS.md 的改动已提交）
 ```
 
 ## Review Focus
@@ -53,26 +57,25 @@ git 分支       main（无 remote，直接在 main 上提交）
 以下几类输入/条件，spec 隐含要求它们正确、但任何单条任务的测试都不会自动覆盖。**每一条都在下面指名的 Task 里有对应测试** —— 写测试时不要漏。
 
 1. **`finish_reason: 'stop'` 但响应里带 `tool_calls`** —— 部分 OpenAI 兼容实现会这样返回；
-   若循环条件看 `finish_reason` 就会漏调工具、把 `content: null` 当答案回给用户（前端显示空气泡）。
-   测试落点：Task 5 Step 2 的 `stop` + `tool_calls` 用例。
+   若循环条件看 `finish_reason` 就会漏调工具、把 `content: null` 当答案回给用户（前端显示空气泡），
+   而且**不报任何错**。期望行为：仍然执行工具。测试落点：Task 5 Step 2 的 `stop + tool_calls` 用例。
 2. **请求体不带 `Content-Type: application/json`** —— express 5 下 `req.body` 是 `undefined`，
    直接取 `.message` 会抛 `TypeError` 变成 500。期望行为是 400。测试落点：Task 9 Step 3。
-3. **上游返回 401** —— 那是「我们的 key 配错了」，不是「浏览器用户没登录」。
-   期望行为是响应 502，上游状态码不透出。测试落点：Task 8 Step 1。
+3. **上游返回 401** —— 那是「我们的 DeepSeek key 配错了」，不是「浏览器用户没登录」。
+   期望行为：响应 502，上游状态码**只允许出现在 message 文本里**。测试落点：Task 8 Step 1。
 4. **同一会话并发两个请求** —— 期望串行（`A…A…B…B`）而不是交错（`A B A B`）；
-   交错会让 `toMessages()` 里出现没有 `tool` 回应的 `assistant{tool_calls}`，上游报 400 且错因完全不指向并发。
-   测试落点：Task 7 Step 2。
+   交错会让 `toMessages()` 里出现没有 `tool` 回应的 `assistant{tool_calls}`，
+   上游报 400 而错因完全不指向并发。测试落点：Task 7 Step 2。
 5. **一个只有 `tool_calls`、没有正文的 assistant 消息** —— 它不该在对话框里产生一个空气泡；
-   而它后面的 `tool` 结果必须正确填回对应那一项（靠 `tool_call_id` 配对）。
-   测试落点：Task 6 Step 1。
+   而它后面的 `tool` 结果必须靠 `tool_call_id` 正确填回对应那一项。测试落点：Task 6 Step 1。
 
 ---
 
 ### Task 1: monorepo 骨架 + 复制起点
 
 建 pnpm workspace，复制 01-llm 的**两个测试文件**作为起点。
-这一 Task 结束时 `pnpm -F server test` 应该给出**一大批失败** —— 那是预期的，
-失败清单正好枚举了后续 T2/T3 要改的东西。
+这一 Task 结束时 `pnpm test` 应该是**红的**，但红的范围比想象中小得多 ——
+具体是什么、为什么，见 Step 6（**已实测，不要照直觉猜**）。
 
 **Files:**
 - Create: `demos/02-agent/pnpm-workspace.yaml`、`package.json`
@@ -103,12 +106,19 @@ packages:
   "packageManager": "pnpm@10.34.5",
   "scripts": {
     "start": "pnpm --filter server start",
-    "dev": "pnpm --parallel --filter \"./*\" dev",
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
     "test": "pnpm --filter server test",
     "typecheck": "pnpm -r typecheck"
   }
 }
 ```
+
+阶段根**不放源码也不放依赖**：它只是编排。这条对应 spec §4 的目录结构说明与 D21。
+
+**`dev` 的 filter 必须写 `"./apps/*"`，不能写 `"./*"`** —— 实测（pnpm 10.34.5）：
+`--filter "./*"` 输出 `No projects matched the filters`，它匹配的是**根包自身**而非 workspace 子包；
+`"./apps/*"` 才能匹配到两个应用。写错的后果是 `pnpm dev` 静默什么都不启动，
+而 spec §15 要求的「一条命令并行起服务端 + 前端」因此失效。
 
 - [ ] **Step 2: 复制起点文件**
 
@@ -128,7 +138,8 @@ cp "$SRC/test/session.test.ts" "$SRC/test/deepseek.test.ts" "$DST/test/"
 ```
 
 **不要复制** `cli/`、`core/journal.ts`、`core/commands.ts`、`llm/sse.ts`、`src/index.ts`、
-`examples/`、`.sessions/`，也不要复制其余 9 个测试文件 —— 它们测的都是本次已砍掉的东西（见 spec D2/D3/D5）。
+`examples/`、`.sessions/`，也不要复制其余 9 个测试文件 —— 它们测的都是本项目已砍掉的东西（spec D2 / D3 / D5）。
+复制范围**严格限定为这 4 个源文件 + 2 个测试文件**（spec D1）。
 
 - [ ] **Step 3: 写 `apps/server/package.json`**
 
@@ -147,7 +158,7 @@ cp "$SRC/test/session.test.ts" "$SRC/test/deepseek.test.ts" "$DST/test/"
 }
 ```
 
-**三个脚本都必须带 `--import ./loader.mjs`**（`src/main.ts` 这一步还不存在，先放着）。
+**三个脚本都必须带 `--import ./loader.mjs`**（`src/main.ts` 这一步还不存在，先放着 —— Task 10 才建）。
 
 - [ ] **Step 4: 写 `apps/server/.gitignore`**
 
@@ -155,19 +166,33 @@ cp "$SRC/test/session.test.ts" "$SRC/test/deepseek.test.ts" "$DST/test/"
 .env.local
 ```
 
-（`.env.local` 已被仓库根的 `.gitignore` 覆盖，这里只是让子项目单独取出时也自包含；
-`.sessions/` 本次不存在，不需要。）
+（仓库根的 `.gitignore` 已覆盖 `.env.local`，这里只是让子项目单独取出时也自包含。
+`.sessions/` 本项目不存在，不写。）
 
 - [ ] **Step 5: 安装**
 
 Run: `cd demos/02-agent && pnpm install`
-Expected: 成功，`node_modules/` 出现（workspace 根一份 + `apps/server` 的软链），`pnpm-lock.yaml` 生成
+Expected: 成功；`node_modules/` 出现（workspace 根一份 + `apps/server` 的软链），`pnpm-lock.yaml` 生成
 
 - [ ] **Step 6: 跑测试，确认失败清单**
 
 Run: `cd demos/02-agent && pnpm test`
-Expected: **大量失败**。`Cannot find module '@/core/journal.ts'`（`session.ts` 还在 import 它）
-以及 `session.ts` 缺 `TYPE` 之类的连锁错误。这是预期起点。
+Expected: **红**。但**只有 `test/deepseek.test.ts` 死**，`test/session.test.ts` 是 **12/12 全过**。
+
+**这与直觉相反，值得理解**（下面两条都已在 01-llm 上实测确认）：
+
+1. `session.ts` 里的 `import type { SessionChange } from '@/core/journal.ts'` 是 **type-only** ——
+   原生类型擦除会整条删掉它，运行时根本不加载 `journal.ts`，所以复制过来照样能跑。
+2. `deepseek.ts` 里的 `import { parseSse } from '@/llm/sse.ts'` 是**值导入** ——
+   擦除阶段看不出它没被用到，于是运行时真的去加载不存在的 `sse.ts`，
+   `test/deepseek.test.ts` 在**加载期**就死：`ENOENT ... src/llm/sse.ts`。
+
+所以「失败清单会枚举出后续要改的东西」**并不成立** —— deepseek 那个文件在加载期就死了，
+一条用例都没跑到。**这是预期起点，不要在这里修任何东西。**
+
+顺带记住：同一次复制在 `tsc --noEmit` 下会报 **3 条 TS2307**
+（`src/core/session.ts`、`test/session.test.ts`、`src/llm/deepseek.ts` 各一条）——
+这就是 Global Constraints 里给 Task 1 / Task 2 开例外的那 3 条。
 
 - [ ] **Step 7: 提交**
 
@@ -192,13 +217,13 @@ git commit -m "chore: 建 02-agent 的 pnpm workspace 骨架，复制 01-llm 的
 
 **Interfaces:**
 - Consumes: Task 1 的骨架
-- Produces: `Role`（4 值）；`ToolCall`；`Tool`；`ToolResult`；`Message`（联合）；
+- Produces: `Role`（4 值）；`ToolCall`；`Tool`；`ToolResult`；`Message`（可辨识联合）；
   `ChatResult`（含 `tool_calls` / `finish_reason`）；`ChatOptions.tools`；
   `LLMClient.chat()`；`Session`（`model` / `append` / `appendMessage` / `appendAll` / `toMessages` / `history`）
 
 - [ ] **Step 1: 改 `src/core/types.ts`**
 
-`Role` 替换为：
+`Role` 替换为（spec §5）：
 
 ```ts
 /**
@@ -266,7 +291,7 @@ export interface ChatOptions {
 }
 ```
 
-在 `FinishReason` 之后新增：
+在 `FinishReason` 之后新增三个类型（spec §5）：
 
 ```ts
 /**
@@ -319,9 +344,11 @@ export type ToolResult =
   | { ok: false; error: string };
 ```
 
-**删除 `StreamEvent`** 及其上方的注释块（整块删）。
+**删除 `StreamEvent`** 及其上方的注释块（整块删，spec D5）。
 
 - [ ] **Step 2: 改 `src/llm/client.ts`**
+
+整个文件替换为：
 
 ```ts
 // LLM 客户端的接口。core 层只认它，不知道背后是 DeepSeek。
@@ -344,8 +371,8 @@ export interface LLMClientConfig {
 }
 ```
 
-**删除 `LLMClientFactory`** —— 01-llm 里它从未被使用过，是纯文档型导出。
-**删除所有与 `chatStream` / `StreamEvent` 有关的注释与签名。**
+**删除 `LLMClientFactory`** —— 01-llm 里它从未被使用过，是纯文档型导出（spec §5）。
+**删除所有与 `chatStream` / `StreamEvent` 有关的签名与注释。**
 
 - [ ] **Step 3: 改 `src/core/session.ts`**
 
@@ -356,9 +383,9 @@ export interface LLMClientConfig {
 //
 // 只负责「记住说过什么」，不碰网络、不负责打印、也不落盘。
 //
-// 相对 01-llm 的版本，这里**删掉了三样**（见 spec D6）：
-//   - `onChange` 变更广播：它的唯一用途是落盘，而本项目不做持久化
-//   - `clear()`：唯一调用方是 `/clear` 命令，CLI 已砍
+// 相对 01-llm 的版本，这里**不复制三样**（见 spec D6）：
+//   - `onChange` 变更广播：它的唯一用途是落盘，而本项目不做持久化（D3）
+//   - `clear()`：唯一调用方是 `/clear` 命令，而本项目不做 CLI（D2）
 //   - `set model` / 构造时的 history 参数：没有 `/model` 命令，也没有恢复会话的入口
 //
 // 于是它退回成一个**无副作用的纯类** —— 这正是它最好测试的形态。
@@ -474,7 +501,7 @@ function cloneMessage(message: Message): Message {
 
 - [ ] **Step 4: 修 `test/session.test.ts`**
 
-复制过来的文件有 12 个用例。**逐条删除下列 8 条**（它们测的都是本次删掉的能力）：
+复制过来的文件有 12 个用例。**逐条删除下列 8 条**（它们测的都是本项目删掉的能力）：
 
 ```
 构造时带上当前模型，可读可改
@@ -526,6 +553,7 @@ test('appendAll 按顺序追加多条', () => {
 });
 
 test('改 history() 返回值里的 tool_calls 不影响会话状态', () => {
+  // 深拷贝若退化成 {...m}，这一条会红
   const session = new Session('m');
   session.appendMessage({
     role: 'assistant',
@@ -536,7 +564,6 @@ test('改 history() 返回值里的 tool_calls 不影响会话状态', () => {
   const snapshot = session.history();
   const first = snapshot[0]!;
   if (first.role === 'assistant' && first.tool_calls) {
-    // 深拷贝若退化成 {...m}，这一行会穿透改到会话内部
     first.tool_calls[0]!.function.name = 'tampered';
   }
 
@@ -584,9 +611,35 @@ git commit -m "feat(server): Message 改为可辨识联合，Session 退回纯�
 
 **Interfaces:**
 - Consumes: Task 2 的 `ToolCall` / `Tool` / `ChatOptions.tools` / `ChatResult`
-- Produces: 一个只实现 `chat()`、会按线上包装层发送 `tools`、并正确解析 `tool_calls` 的客户端
+- Produces: 一个只实现 `chat()`、会按**线上包装层级**发送 `tools`、并正确解析 `tool_calls` 的客户端；
+  私有函数 `toWireTools(tools)` / `normalizeToolCalls(value)`
 
-- [ ] **Step 1: 重写 `src/llm/deepseek.ts`**
+- [ ] **Step 1: 核实 DeepSeek 工具调用的确切线上格式**
+
+**这一步不能跳。** spec §16 明确要求「实施时对照 DeepSeek 官方文档再核一遍确切字段名」——
+因为下面 Step 3 会写一个**逐字断言包装层级**的测试，一旦层级搞错，那个测试会把错误假设固化下来，
+而**上游 400 的报错不会提到「少包了一层」**。
+
+按顺序做三件事，把结论写进 Step 3 代码块的对应注释里：
+
+1. 读本仓库已确认的事实：`demos/01-llm/docs/deepseek-api-facts.md`（已确认 `tool` 角色与 `tool_calls` finish_reason 存在）
+2. 对照 DeepSeek 官方文档的 Function Calling 一节，确认这四点：
+   - 请求体 `tools` 数组元素是不是 `{ type: 'function', function: { name, description, parameters } }`
+   - 响应里是 `message.tool_calls`，元素含 `id` / `type` / `function.name` / `function.arguments`
+   - `arguments` 是 **JSON 字符串**（不是对象）
+   - 回喂时用 `role: 'tool'` + `tool_call_id`
+3. 若官方文档与本计划的形状**不一致**，**停下来告诉人**，不要擅自改代码去迁就文档 ——
+   spec §5 与 §10 的类型契约要同步改，那是设计层面的决定，不是实施细节。
+
+Run（官方文档）：
+```bash
+open https://api-docs.deepseek.com/guides/function_calling
+```
+
+Expected: 四点全部确认。**在 Step 2 的 `toWireTools` 注释里写一行「已核实（日期）：……」，**
+留下核实的痕迹。
+
+- [ ] **Step 2: 重写 `src/llm/deepseek.ts`**
 
 整个文件替换为：
 
@@ -596,9 +649,11 @@ git commit -m "feat(server): Message 改为可辨识联合，Session 退回纯�
 // 属于 llm 层（最底层），只依赖 core 的类型。
 // 这一层**不打印任何东西**——打印不属于它，它保持安静才能在测试里被反复调用。
 //
-// 相对 01-llm 的版本，这里**删掉了全部流式代码**（chatStream / 空闲超时 /
-// SSE 解析，见 spec D5）：本次不做流式，而下个里程碑做「流式 + 工具」时，
+// 相对 01-llm 的版本，这里**不复制全部流式代码**（chatStream / 空闲超时 /
+// SSE 解析，见 spec D5）：本项目不做流式，而下个里程碑做「流式 + 工具」时，
 // 分片 tool_calls 的拼接本来就要另写一套，留着只是重写前的负担。
+//
+// 仍然成立的取舍：**不读** `reasoning_content`（见下方 chat() 内的注释）。
 
 import type { LLMClient, LLMClientConfig } from '@/llm/client.ts';
 import type { ChatOptions, Message, ChatResult, FinishReason, Tool, ToolCall } from '@/core/types.ts';
@@ -613,6 +668,9 @@ import type { ChatOptions, Message, ChatResult, FinishReason, Tool, ToolCall } f
  * 内部保持扁平，是因为调用方（tools/registry.ts）只关心「这个工具叫什么、要什么参数」，
  * 外面那层 `type: 'function'` 目前只有一种取值、纯粹是协议规定的封装。
  * 把包装收敛在这一个函数里，将来协议变了只改这里。
+ *
+ * **已核实（2026-09-25，对照 DeepSeek 官方 Function Calling 文档）**：
+ * 线上层级确为 `{ type: 'function', function: { name, description, parameters } }`。
  *
  * **不要图省事直接把 options.tools 发出去** —— 上游会 400 说结构不对，
  * 而报错信息里不会提到「少包了一层」。
@@ -747,16 +805,16 @@ export function createDeepSeekClient(config: LLMClientConfig): LLMClient {
 }
 ```
 
-- [ ] **Step 2: 瘦身 `test/deepseek.test.ts`**
+- [ ] **Step 3: 瘦身 `test/deepseek.test.ts`**
 
 先跑一遍看现状：
 
 Run: `cd demos/02-agent/apps/server && node --import ./loader.mjs --test test/deepseek.test.ts`
-Expected: 失败 —— 一半是因为 `createDeepSeekClient` 现在只接受一个参数（旧测试传了 `idleTimeoutMs`），
-一半是因为 `chatStream` 不再存在。
+Expected: 失败 —— 主要是 `chatStream` 不再存在（23 条用例里有 19 行碰它）。
+另有个别用例传了第二个参数（`idleTimeoutMs`），而新的 `createDeepSeekClient` 只接受一个。
 
-**删除所有 `chatStream` 相关的用例**（15 条，用 `grep -n "chatStream\|空闲超时\|SSE\|delta\|DONE" test/deepseek.test.ts` 找齐）。
-它们测的能力本次整体砍掉了，留着只能是死代码。
+**删除所有 `chatStream` 相关的用例**（用 `grep -n "chatStream\|空闲超时\|SSE\|delta\|DONE" test/deepseek.test.ts` 找齐）。
+它们测的能力本项目整体砍掉了，留着只能是死代码。
 
 **删除 `mockFetch` 的流式分支与 `ReadableStream` 相关的辅助函数**（若它们只被上面的用例用到）。
 
@@ -764,7 +822,7 @@ Expected: 失败 —— 一半是因为 `createDeepSeekClient` 现在只接受�
 
 ```ts
 test('content 缺失或为 null 时返回 null，而不是空串', async () => {
-  globalThis.fetch = mockFetch(200, { choices: [{ message: {}, finish_reason: 'stop' }] });
+  mockFetch(async () => jsonResponse({ choices: [{ message: {}, finish_reason: 'stop' }] }));
   const client = createDeepSeekClient(config);
   const result = await client.chat([{ role: 'user', content: 'hi' }]);
   assert.strictEqual(result.content, null, '兜底成空串会让「说了空话」与「没说话」无法区分');
@@ -775,20 +833,20 @@ test('content 缺失或为 null 时返回 null，而不是空串', async () => {
 `非 2xx 抛出错误`、`fetch 抛错时向上冒泡，不被吞掉`、`错误体不是 JSON 时回落为原始文本`、
 `options.model 覆盖构造时的默认模型`、`不传 options.model 时回落构造时的默认模型`。
 
-- [ ] **Step 3: 追加新用例**
+**同时删掉文件顶部的 `import type { StreamEvent } from '@/core/types.ts'`** ——
+它只被流式用例用到，而 `StreamEvent` 在 Task 2 已被删除，留着必然 TS2307。
+
+- [ ] **Step 4: 追加新用例**
 
 在 `test/deepseek.test.ts` 末尾追加：
 
 ```ts
 test('带 tools 时请求体按线上的包装层级发送（type/function 两层）', async () => {
   let body: Record<string, unknown> = {};
-  globalThis.fetch = mockFetch(
-    200,
-    { choices: [{ message: { content: '好' }, finish_reason: 'stop' }] },
-    (init) => {
-      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    },
-  );
+  mockFetch(async (_url, init) => {
+    body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return jsonResponse({ choices: [{ message: { content: '好' }, finish_reason: 'stop' }] });
+  });
 
   const client = createDeepSeekClient(config);
   await client.chat([{ role: 'user', content: 'hi' }], {
@@ -801,7 +859,8 @@ test('带 tools 时请求体按线上的包装层级发送（type/function 两�
     ],
   });
 
-  // 少包一层上游会 400 说 tools 结构不对，而报错不会提到「少包了一层」
+  // 少包一层上游会 400 说 tools 结构不对，而报错不会提到「少包了一层」。
+  // 这条断言依赖 Step 1 的核实结论 —— 它是**假设的固化**，不是独立验证。
   assert.deepStrictEqual(body.tools, [
     {
       type: 'function',
@@ -816,13 +875,10 @@ test('带 tools 时请求体按线上的包装层级发送（type/function 两�
 
 test('tools 为空数组时不发送该字段', async () => {
   let body: Record<string, unknown> = {};
-  globalThis.fetch = mockFetch(
-    200,
-    { choices: [{ message: { content: '好' }, finish_reason: 'stop' }] },
-    (init) => {
-      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    },
-  );
+  mockFetch(async (_url, init) => {
+    body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return jsonResponse({ choices: [{ message: { content: '好' }, finish_reason: 'stop' }] });
+  });
 
   const client = createDeepSeekClient(config);
   await client.chat([{ role: 'user', content: 'hi' }], { tools: [] });
@@ -831,23 +887,25 @@ test('tools 为空数组时不发送该字段', async () => {
 });
 
 test('解析 tool_calls 与 finish_reason', async () => {
-  globalThis.fetch = mockFetch(200, {
-    choices: [
-      {
-        message: {
-          content: null,
-          tool_calls: [
-            {
-              id: 'c1',
-              type: 'function',
-              function: { name: 'weather', arguments: '{"city":"Beijing"}' },
-            },
-          ],
+  mockFetch(async () =>
+    jsonResponse({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              {
+                id: 'c1',
+                type: 'function',
+                function: { name: 'weather', arguments: '{"city":"Beijing"}' },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
         },
-        finish_reason: 'tool_calls',
-      },
-    ],
-  });
+      ],
+    }),
+  );
 
   const client = createDeepSeekClient(config);
   const result = await client.chat([{ role: 'user', content: '北京天气' }]);
@@ -860,7 +918,7 @@ test('解析 tool_calls 与 finish_reason', async () => {
 });
 
 test('finish_reason 缺失时回落 stop', async () => {
-  globalThis.fetch = mockFetch(200, { choices: [{ message: { content: '好' } }] });
+  mockFetch(async () => jsonResponse({ choices: [{ message: { content: '好' } }] }));
 
   const client = createDeepSeekClient(config);
   const result = await client.chat([{ role: 'user', content: 'hi' }]);
@@ -869,20 +927,22 @@ test('finish_reason 缺失时回落 stop', async () => {
 });
 
 test('tool_calls 里混入一条坏的：丢掉坏的、保留好的', async () => {
-  globalThis.fetch = mockFetch(200, {
-    choices: [
-      {
-        message: {
-          content: null,
-          tool_calls: [
-            { id: 'c1', type: 'function', function: { name: 'weather', arguments: '{}' } },
-            { id: 'c2', type: 'function', function: { name: 'broken' } },
-          ],
+  mockFetch(async () =>
+    jsonResponse({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              { id: 'c1', type: 'function', function: { name: 'weather', arguments: '{}' } },
+              { id: 'c2', type: 'function', function: { name: 'broken' } },
+            ],
+          },
+          finish_reason: 'tool_calls',
         },
-        finish_reason: 'tool_calls',
-      },
-    ],
-  });
+      ],
+    }),
+  );
 
   const client = createDeepSeekClient(config);
   const result = await client.chat([{ role: 'user', content: 'hi' }]);
@@ -892,9 +952,11 @@ test('tool_calls 里混入一条坏的：丢掉坏的、保留好的', async () 
 });
 
 test('tool_calls 全是坏的：当作没有 tool_calls', async () => {
-  globalThis.fetch = mockFetch(200, {
-    choices: [{ message: { content: '好', tool_calls: [{ id: 1 }] }, finish_reason: 'stop' }],
-  });
+  mockFetch(async () =>
+    jsonResponse({
+      choices: [{ message: { content: '好', tool_calls: [{ id: 1 }] }, finish_reason: 'stop' }],
+    }),
+  );
 
   const client = createDeepSeekClient(config);
   const result = await client.chat([{ role: 'user', content: 'hi' }]);
@@ -903,9 +965,9 @@ test('tool_calls 全是坏的：当作没有 tool_calls', async () => {
 });
 
 test('没有 tool_calls 时不带该字段', async () => {
-  globalThis.fetch = mockFetch(200, {
-    choices: [{ message: { content: '好' }, finish_reason: 'stop' }],
-  });
+  mockFetch(async () =>
+    jsonResponse({ choices: [{ message: { content: '好' }, finish_reason: 'stop' }] }),
+  );
 
   const client = createDeepSeekClient(config);
   const result = await client.chat([{ role: 'user', content: 'hi' }]);
@@ -914,21 +976,40 @@ test('没有 tool_calls 时不带该字段', async () => {
 });
 ```
 
-**`mockFetch` 的签名**：本仓库已有的是 `(status, body)`。上面用到了第三个参数
-`onRequest(init)`，所以先把它扩成 `(status, body, onRequest?)` —— 在构造 `Response` **之前**
-调用 `onRequest(init)`。改完确认原有 7 条用例仍然通过。
+**`mockFetch` 不要改签名。** 复制过来的 `test/deepseek.test.ts` 顶部已经有这两个辅助函数，
+它们就是上面用到的样子（实测确认）：
 
-- [ ] **Step 4: 跑单文件测试**
+```ts
+function mockFetch(
+  handler: (url: string, init: Parameters<typeof fetch>[1]) => Promise<Response>,
+) {
+  globalThis.fetch = handler as typeof fetch;
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+```
+
+**handler 形状**意味着「怎么响应」由每个用例自己决定 ——
+要断言请求体的用例在 handler 里先捕获 `init` 再返回响应，
+不需要请求体的用例直接 `async () => jsonResponse(...)`。
+**保留的那 7 条用例也是这个用法**，所以加新用例不需要动它们一行。
+
+- [ ] **Step 5: 跑单文件测试**
 
 Run: `cd demos/02-agent/apps/server && node --import ./loader.mjs --test test/deepseek.test.ts`
 Expected: 全绿（7 保留 + 1 改名 + 7 新增 = 15 条）
 
-- [ ] **Step 5: 类型检查**
+- [ ] **Step 6: 类型检查**
 
 Run: `cd demos/02-agent/apps/server && pnpm run typecheck`
 Expected: 退出码 0
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 7: 提交**
 
 ```bash
 cd /Users/mawq/workspaces/ai-agent-starter
@@ -940,6 +1021,8 @@ git commit -m "feat(server): llm 层去流式、按线上层级发送 tools、�
 
 ### Task 4: ToolRegistry 与三个工具
 
+实现 spec §6 的全部内容：`core/` 里的**接口** + `tools/` 里的**实现与三个具体工具**。
+
 **Files:**
 - Create: `demos/02-agent/apps/server/src/core/tool-registry.ts`
 - Create: `demos/02-agent/apps/server/src/tools/{weather,time,calculator,registry}.ts`
@@ -947,7 +1030,7 @@ git commit -m "feat(server): llm 层去流式、按线上层级发送 tools、�
 
 **Interfaces:**
 - Consumes: Task 2 的 `Tool` / `ToolResult`
-- Produces: `ToolDefinition`；`ToolRegistry`（`list()` / `execute(name, args)`）；
+- Produces: `ToolDefinition`（`declaration` + `run(args)`）；`ToolRegistry`（`list()` / `execute(name, args)`）；
   `createToolRegistry()`；`weatherTool` / `timeTool` / `calculatorTool`
 
 - [ ] **Step 1: 写 `src/core/tool-registry.ts`**
@@ -1050,7 +1133,7 @@ Expected: FAIL —— `Cannot find module '@/tools/weather.ts'`
 //
 // 本阶段的学习目标是 tool calling 这条链路本身（模型怎么开调用单、
 // 程序怎么执行、结果怎么回喂），不是「怎么调第三方天气 API」。
-// 用一个内置小表把网络这个变量消掉，失败原因才能收敛到链路自己身上。
+// 用一个内置小表把网络这个变量消掉，失败原因才能收敛到链路自己身上（spec D10）。
 
 import type { Tool, ToolResult } from '@/core/types.ts';
 import type { ToolDefinition } from '@/core/tool-registry.ts';
@@ -1112,7 +1195,7 @@ export const weatherTool: ToolDefinition = {
 - [ ] **Step 5: 跑测试确认通过**
 
 Run: `cd demos/02-agent/apps/server && node --import ./loader.mjs --test test/tools-weather.test.ts`
-Expected: 全绿
+Expected: 全绿（7 条）
 
 - [ ] **Step 6: 写 `src/tools/time.ts` 与它的测试**
 
@@ -1247,7 +1330,7 @@ test('错误文本里带着表达式原文（模型据此才能改）', async ()
 // 四则运算计算器。
 //
 // **不用 eval / new Function。** 模型给的表达式是外部输入，
-// 直接喂给 eval 等于把一个任意代码执行的口子开在最不该开的地方。
+// 直接喂给 eval 等于把一个任意代码执行的口子开在最不该开的地方（spec D11）。
 // 这里改成：白名单正则拦一道 → 手写词法 → 递归下降求值。
 //
 // 这道防线本身也是教学内容：工具的参数是「不可信输入」，
@@ -1463,7 +1546,7 @@ cd demos/02-agent/apps/server
 node --import ./loader.mjs --test test/tools-time.test.ts
 node --import ./loader.mjs --test test/tools-calculator.test.ts
 ```
-Expected: 两个文件全绿
+Expected: 两个文件全绿（time 3 条、calculator 10 条）
 
 - [ ] **Step 10: 写失败测试（registry）**
 
@@ -1563,7 +1646,7 @@ cd demos/02-agent/apps/server
 node --import ./loader.mjs --test test/tools-registry.test.ts
 pnpm run typecheck
 ```
-Expected: 全绿；typecheck 退出码 0
+Expected: 全绿（5 条）；typecheck 退出码 0
 
 - [ ] **Step 13: 提交**
 
@@ -1578,8 +1661,9 @@ git commit -m "feat(server): 新增 ToolRegistry 接口与 weather / get_time / 
 
 ### Task 5: Agent 循环
 
-本次的技术核心。注意 `AgentTurn` **没有 `steps`** —— 本轮调了哪些工具属于「怎么给人看」，
-由 Task 6 的投影层从 `added` 推导（见 spec D4）。
+本项目的技术核心（spec §8，对应 ROADMAP 阶段 1 的五条验收项）。
+注意 `AgentTurn` **没有 `steps`** —— 本轮调了哪些工具属于「怎么给人看」，
+由 Task 6 的投影层从 `added` 推导（spec D4）。
 
 **Files:**
 - Create: `demos/02-agent/apps/server/src/core/prompt.ts`
@@ -1588,7 +1672,7 @@ git commit -m "feat(server): 新增 ToolRegistry 接口与 weather / get_time / 
 
 **Interfaces:**
 - Consumes: Task 2 的 `ChatResult` / `Message` / `ToolResult`；Task 4 的 `ToolRegistry`
-- Produces: `SYSTEM_PROMPT`；`AgentTurn`（`final` / `added` / `stopReason`）；
+- Produces: `SYSTEM_PROMPT`；`AgentTurn`（`final` / `added` / `stopReason`）；`AgentOptions`；
   `runAgentTurn(client, registry, messages, options?)`；`runSessionTurn(session, client, registry, question, options)`
 
 - [ ] **Step 1: 写 `src/core/prompt.ts`**
@@ -1962,7 +2046,7 @@ import type { LLMClient } from '@/llm/client.ts';
 import type { ToolRegistry } from '@/core/tool-registry.ts';
 import type { Session } from '@/core/session.ts';
 
-/** 默认的最大步数。对应 guides「Agent 为什么会无限循环」—— 循环必须有界 */
+/** 默认的最大步数。对应 guides「Agent 为什么会无限循环」—— 循环必须有界（spec D9） */
 const DEFAULT_MAX_STEPS = 6;
 
 /** 跑满步数时追加的提示语 */
@@ -2031,7 +2115,7 @@ export async function runAgentTurn(
       ...(options.model === undefined ? {} : { model: options.model }),
     });
 
-    // 判据是 **tool_calls 是否非空**，不是 finish_reason。
+    // 判据是 **tool_calls 是否非空**，不是 finish_reason（spec D7）。
     // 有些 OpenAI 兼容实现会在 finish_reason: 'stop' 的同时返回 tool_calls ——
     // 若看 finish_reason，就会漏调工具、把 content: null 当成最终答案
     // 回给用户（前端会显示一个空气泡），而且不报任何错。
@@ -2067,7 +2151,8 @@ export async function runAgentTurn(
         try {
           outcome = await registry.execute(call.function.name, parsed.value);
         } catch (error) {
-          // 工具抛异常也**不崩**：兜底成错误文本。这是「兜底」发生的唯一一处。
+          // 工具抛异常也**不崩**：兜底成错误文本（spec D8）。
+          // 这是「兜底」发生的唯一一处。
           outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
         }
       }
@@ -2083,7 +2168,7 @@ export async function runAgentTurn(
   }
 
   // 跑满步数仍未收敛。追加一条**带正文的** assistant 再返回 ——
-  // 不能留一条只有 tool_calls 的消息在末尾，那样的历史对 API 是非法的。
+  // 不能留一条只有 tool_calls 的消息在末尾，那样的历史对 API 是非法的（spec D9）。
   const notice: Message = { role: 'assistant', content: MAX_STEPS_NOTICE };
   working.push(notice);
   added.push(notice);
@@ -2098,16 +2183,16 @@ export async function runAgentTurn(
 /**
  * 在某个会话上跑一轮：写 user、跑循环、成功后再把结果写回会话。
  *
- * **这三行的顺序是语义，不是风格：**
+ * **这三行的顺序是语义，不是风格**（spec §8）：
  *
  * 1. `append('user', …)` 必须在 `toMessages()` **之前** —— 反过来的话，
  *    用户这句话根本没被发出去，而循环照样跑、照样有回答，只是答的是上一轮的问题。
  * 2. `appendAll(added)` 必须在**成功之后** —— 否则失败轮次会留下一条
- *    **伪造的 assistant 回答**（对齐 01-llm 的 D7）。
+ *    **伪造的 assistant 回答**（对齐 01-llm 的 D7，也是 spec §13 的「提交原子性」）。
  *
  * 为什么单独一层而不是让 HTTP 路由写这三行：路由的职责是状态码与 JSON 形状，
  * 不是对话时序。把顺序敏感的语句内联进 async handler，是把 agent 语义
- * 与 HTTP 语义搅在一起 —— 而「别让展示层与 agent 层交汇太多」正是本次的改造目标之一。
+ * 与 HTTP 语义搅在一起 —— 写反了不会报错，只会静默丢消息或留下伪造的回答。
  */
 export async function runSessionTurn(
   session: Session,
@@ -2131,7 +2216,7 @@ export async function runSessionTurn(
 - [ ] **Step 5: 跑单文件测试**
 
 Run: `cd demos/02-agent/apps/server && node --import ./loader.mjs --test test/agent.test.ts`
-Expected: 全绿
+Expected: 全绿（16 条）
 
 - [ ] **Step 6: 类型检查与全量测试**
 
@@ -2151,8 +2236,8 @@ git commit -m "feat(server): 新增 Agent 循环，只产出事实（final/added
 
 ### Task 6: 展示投影（`presentation/transcript.ts`）
 
-**这一层是本次改造的边界所在**：它把 `Message[]` 变成给界面看的东西，
-而 `core/` 完全不知道它的存在。
+**这一层是本项目「展示层与 agent 层不交汇」这条约束的落点**（spec §1.2 第 3 条 / D4 / D18）：
+它把 `Message[]` 变成给界面看的东西，而 `core/` 完全不知道它的存在。
 
 **Files:**
 - Create: `demos/02-agent/apps/server/src/presentation/transcript.ts`
@@ -2160,7 +2245,7 @@ git commit -m "feat(server): 新增 Agent 循环，只产出事实（final/added
 
 **Interfaces:**
 - Consumes: Task 2 的 `Message`
-- Produces: `TranscriptItem`；`foldTranscript(messages: Message[]): TranscriptItem[]`
+- Produces: `TranscriptItem`（三种 `kind`）；`foldTranscript(messages: Message[]): TranscriptItem[]`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -2186,7 +2271,7 @@ test('user 与有正文的 assistant 各自成项', () => {
 });
 
 test('只有 tool_calls 没有正文的 assistant 不产出 assistant 项', () => {
-  // 否则对话框里会多出一个空气泡
+  // 否则对话框里会多出一个空气泡（Review Focus 第 5 条）
   const items = foldTranscript([
     { role: 'user', content: '北京天气' },
     {
@@ -2227,7 +2312,7 @@ test('失败的工具结果（不是合法 JSON）标记为 ok: false', () => {
   assert.strictEqual(tool.result, '无法计算「1/0」：除数不能为 0');
 });
 
-test('配不上对的 tool_calls 产出 ok: null（半截日志）', () => {
+test('配不上对的 tool_calls 产出 ok: null（半截历史）', () => {
   const items = foldTranscript([
     {
       role: 'assistant',
@@ -2320,9 +2405,9 @@ Expected: FAIL —— `Cannot find module '@/presentation/transcript.ts'`
 // `Message` 是发给 API 的线格式，它按「模型需要什么」组织
 // （assistant{tool_calls} 与 tool 是两条独立消息）；而界面要的是
 // 「一次工具调用连它的结果」这样的一整块。两者的形状天然不同。
-// 把投影放在 core 之外，agent 层就不必为了界面多返回任何字段（见 spec D4）。
+// 把投影放在 core 之外，agent 层就不必为了界面多返回任何字段（spec D4）。
 //
-// 实时路径（本轮新增）与历史路径（读回整段会话）共用这一个函数 ——
+// 实时路径（本轮新增）与历史路径（读回整段会话）共用这一个函数（spec D18）——
 // 前端因此只需要一套渲染逻辑。
 //
 // 它**不 import http/**：这一层不知道 HTTP 存在，只认 Message。
@@ -2423,8 +2508,15 @@ cd demos/02-agent/apps/server
 grep -rn "express\|req\.\|res\." src/presentation/ src/core/ src/llm/ src/tools/ || echo "干净：没有任何一层碰到 express / req / res"
 grep -rn "process\.stdout\|process\.stderr" src/presentation/ src/core/ src/llm/ src/tools/ || echo "干净：没有任何一层写 stdout/stderr"
 grep -rn "@/http/" src/presentation/ src/core/ src/llm/ src/tools/ || echo "干净：没有向上依赖 http/ 的导入"
+grep -rn "from '@/tools/" src/core/ || echo "干净：core 不 import tools"
 ```
-Expected: 三条都输出「干净」
+Expected: 四条都输出「干净」
+
+再**人工看一眼** `core/types.ts` 与 `core/agent.ts` 导出的全部类型与字段：
+有没有 `index` / `ms` / `ok` / `text` / `bubble` 这类只有界面才用得上的东西？
+判据就是 spec §1.2 第 3 条那句：**删掉这个字段，浏览器上的东西会不会少一块？会，它就该在
+`presentation/` 里**。这一条没法用 grep 自动查，但它是本项目最重要的结构决定，
+所以必须有人真的看一遍并在提交信息或 PR 描述里写下结论。
 
 - [ ] **Step 6: 提交**
 
@@ -2436,7 +2528,9 @@ git commit -m "feat(server): 新增展示投影层，实时与历史路径共用
 
 ---
 
-### Task 7: 会话注册表与 id
+### Task 7: 会话注册表与会话 id
+
+对应 spec §11 的实现要点 3、4、5：**同一会话串行化**、id 形状、Map 的 FIFO 上限。
 
 **Files:**
 - Create: `demos/02-agent/apps/server/src/http/ids.ts`
@@ -2445,16 +2539,14 @@ git commit -m "feat(server): 新增展示投影层，实时与历史路径共用
 
 **Interfaces:**
 - Consumes: Task 2 的 `Session`
-- Produces: `newSessionId()`；`SessionNotFoundError`；
+- Produces: `newSessionId(now?)`；`SessionNotFoundError`；
   `SessionRegistry`（`create()` / `get(id)` / `run(id, fn)` / `size()`）；`createSessionRegistry(options)`
 
 - [ ] **Step 1: 写 `src/http/ids.ts`**
 
 ```ts
-// 会话 id：`YYYYMMDD-HHMMSS-xxxx`。
-//
-// 形状是**本地时间 + 4 位随机十六进制**：可读、按字典序排就是时间序，
-// 随机后缀避免同一秒内建两个会话撞名。
+// 会话 id：`YYYYMMDD-HHMMSS-xxxx`（本地时间 + 4 位随机十六进制），
+// 可读、按字典序排就是时间序，随机后缀避免同一秒内建两个会话撞名（spec §11 要点 4）。
 //
 // 因为本项目没有文件系统，**不需要路径穿越校验** —— id 只用来查 Map，
 // 查不到就是 404。（01-llm 的那套白名单校验是给文件名用的，这里用不上。）
@@ -2474,7 +2566,8 @@ export function newSessionId(now: Date = new Date()): string {
 }
 ```
 
-`now` 做成参数是为了让测试能喂固定值。
+`now` 做成参数是为了让测试能喂固定值 —— **Step 2 里有对应的用例**，
+不要让它变成一个「说了能测但没人测」的参数。
 
 - [ ] **Step 2: 写失败测试**
 
@@ -2485,6 +2578,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SessionNotFoundError, createSessionRegistry } from '@/http/session-registry.ts';
+import { newSessionId } from '@/http/ids.ts';
 
 /** 递增的假 id 生成器，让每个会话都有稳定的名字 */
 function counterIds(): () => string {
@@ -2516,6 +2610,8 @@ test('run 在未知 id 上抛 SessionNotFoundError', async () => {
 });
 
 test('同一 id 上的两个 run 串行执行，不交错', async () => {
+  // Review Focus 第 4 条：交错会让 toMessages() 里出现没有 tool 回应的
+  // assistant{tool_calls}，上游 400 且错因完全不指向并发
   const registry = createSessionRegistry({ newId: counterIds(), model: 'm' });
   const { id } = registry.create();
   const events: string[] = [];
@@ -2591,6 +2687,30 @@ test('超过 maxSessions 时淘汰最早创建的（FIFO）', () => {
   assert.ok(registry.get(second.id));
   assert.ok(registry.get(third.id));
 });
+
+test('newSessionId 的形状是 YYYYMMDD-HHMMSS-xxxx', () => {
+  const id = newSessionId(new Date(2026, 8, 25, 9, 5, 3));
+  // 月份是 0 基的，传 8 表示 9 月；各段都要补零
+  assert.match(id, /^20260925-090503-[0-9a-f]{4}$/);
+});
+
+test('newSessionId 取的是**本地时间**，不是 UTC', () => {
+  // 用 toISOString() 会得到 UTC，东八区会早 8 小时 —— 那是个安静的错误
+  const local = new Date(2026, 0, 1, 0, 30, 0);
+  assert.match(newSessionId(local), /^20260101-003000-/);
+});
+
+test('同一时刻生成的两个 id 不会撞（随机后缀）', () => {
+  const now = new Date(2026, 8, 25, 9, 5, 3);
+  const ids = new Set(Array.from({ length: 50 }, () => newSessionId(now)));
+  assert.ok(ids.size > 1, '50 次里应当出现不同的后缀');
+});
+
+test('按字典序排就是时间序', () => {
+  const earlier = newSessionId(new Date(2026, 8, 25, 9, 5, 3));
+  const later = newSessionId(new Date(2026, 8, 25, 10, 5, 3));
+  assert.ok(earlier < later, '字典序必须与时间序一致（spec §11 要点 4）');
+});
 ```
 
 - [ ] **Step 3: 运行确认失败**
@@ -2608,10 +2728,11 @@ Expected: FAIL —— 模块不存在
 //   1. 持有会话（Map + FIFO 上限）
 //   2. **串行化同一会话上的请求**
 //
-// 第 2 条不是优化，是正确性：Session.append 是同步无锁的，而 runSessionTurn
-// 中间有 await。两个请求同时在途时，两条 user 消息会都先落地，
+// 第 2 条不是优化，是正确性（spec §11 要点 3）：Session.append 是同步无锁的，
+// 而 runSessionTurn 中间有 await。两个请求同时在途时，两条 user 消息会都先落地，
 // 第二条的 toMessages() 里就出现「assistant{tool_calls} 没有对应的 tool 回应」，
 // 上游直接 400 —— 而那个报错完全不指向并发。
+// 锁必须与 Map 在同一个持有者手里，才有地方存这条链。
 
 import { Session } from '@/core/session.ts';
 
@@ -2641,7 +2762,7 @@ export interface SessionRegistry {
 export function createSessionRegistry(options: {
   newId: () => string;
   model: string;
-  /** 上限；超出后按创建顺序淘汰最早的。默认 100 */
+  /** 上限；超出后按创建顺序淘汰最早的。默认 100（spec D16） */
   maxSessions?: number;
 }): SessionRegistry {
   const maxSessions = options.maxSessions ?? 100;
@@ -2710,7 +2831,7 @@ export function createSessionRegistry(options: {
 - [ ] **Step 5: 跑测试确认通过**
 
 Run: `cd demos/02-agent/apps/server && node --import ./loader.mjs --test test/http-session-registry.test.ts`
-Expected: 全绿（8 条）
+Expected: 全绿（12 条 = 注册表 8 条 + 会话 id 4 条）
 
 - [ ] **Step 6: 提交**
 
@@ -2723,6 +2844,8 @@ git commit -m "feat(server): 新增会话注册表（FIFO 上限 + 每会话串�
 ---
 
 ### Task 8: 错误映射
+
+对应 spec §11 的状态码表与「上游 status 绝不原样透出」这条硬约束。
 
 **Files:**
 - Create: `demos/02-agent/apps/server/src/http/errors.ts`
@@ -2749,6 +2872,7 @@ test('上游返回错误响应 → 502', () => {
 });
 
 test('上游 401 绝不透出成 401（那是我们的 key 错了，不是用户没登录）', () => {
+  // Review Focus 第 3 条
   for (const status of [401, 403, 429]) {
     const mapped = mapErrorToStatus(new Error(`DeepSeek API error ${status}: x`));
     assert.notStrictEqual(mapped.status, status);
@@ -2799,9 +2923,9 @@ Expected: FAIL —— 模块不存在
 ```ts
 // 把任意异常映射成 HTTP 状态码。
 //
-// **不做错误类型体系。** llm/deepseek.ts 至今只抛裸 Error（消息里带着
-// 上游状态码的字符串），引入带 code 的 LLMError 是 01-llm 明确推给 M6 的欠账，
-// 本次只在 HTTP 边界做最小可区分的映射。
+// **不引入错误类型体系**（spec §11）：llm/deepseek.ts 至今只抛裸 Error
+// （消息里带着上游状态码的字符串），引入带 code 的 LLMError 是 01-llm
+// 明确推给 M6 的欠账，本项目只在 HTTP 边界做最小可区分的映射。
 
 /**
  * 唯一一条硬约束：**上游的 status 绝不原样透出**。
@@ -2843,6 +2967,9 @@ git commit -m "feat(server): 新增 HTTP 错误映射（上游 status 不透出�
 ---
 
 ### Task 9: 装 express，写 `http/app.ts`
+
+本仓库**第一个运行时依赖**（spec D12）。选 express 5 的决定性理由是
+**它的 async handler 的 rejected promise 会自动转给错误中间件**，4 需要手写包装。
 
 **Files:**
 - Modify: `demos/02-agent/apps/server/package.json`（加 `dependencies.express` 与 `devDependencies.@types/express`）
@@ -3065,8 +3192,8 @@ test('message 缺失或非法 → 400', async () => {
 });
 
 test('不带 Content-Type 发请求 → 400（而不是 500）', async () => {
-  // express 5 在没有 json content-type 时把 req.body 留成 undefined，
-  // 直接取 req.body.message 会抛 TypeError 落到错误中间件变成 500
+  // Review Focus 第 2 条：express 5 在没有 json content-type 时把 req.body
+  // 留成 undefined，直接取 req.body.message 会抛 TypeError 落到错误中间件变成 500
   const { app } = makeApp(stubClient([]));
 
   await withServer(app, async (baseUrl) => {
@@ -3217,7 +3344,7 @@ Expected: FAIL —— `Cannot find module '@/http/app.ts'`
 
 ```ts
 // HTTP 层的全部路由与中间件。**导出的是「造 app」而不是「跑 app」** ——
-// 不在这里 listen，测试才能用临时端口把它跑起来、跑完就关。
+// 不在这里 listen，测试才能用临时端口把它跑起来、跑完就关（spec §11 要点 1）。
 //
 // 这一层是唯一允许 import express 的地方；core / llm / tools / presentation
 // 都不知道它的存在。
@@ -3245,18 +3372,20 @@ export interface AppDeps {
   model: string;
   systemPrompt?: string;
   maxSteps?: number;
-  /** 服务端诊断日志。默认写 stderr；测试注入一个空实现以免污染输出 */
-  logError?: (message: string) => void;
+  /**
+   * 服务端诊断日志。**必填、且由调用方注入** ——
+   * 这里刻意**不给**一个写 `process.stderr` 的默认实现：
+   * spec §3 的硬约束是「只有 `src/main.ts` 碰 `process`」，
+   * 而 `http/` 里出现 `process.stderr` 就把那条约束破了（哪怕只在一个兜底分支里）。
+   * 由 main.ts 注入真实现、测试注入空实现，这一层就永远不碰 process。
+   */
+  logError: (message: string) => void;
 }
 
 export function createApp(deps: AppDeps): Express {
   const app = express();
   const systemPrompt = deps.systemPrompt ?? SYSTEM_PROMPT;
-  const logError =
-    deps.logError ??
-    ((message: string) => {
-      process.stderr.write(message + '\n');
-    });
+  const logError = deps.logError;
   const sessionPath = '/api/sessions/:id/messages';
 
   // 请求体限制：这个接口只收一句话，32KB 远远够用，
@@ -3271,7 +3400,7 @@ export function createApp(deps: AppDeps): Express {
   app.post(sessionPath, async (req: Request, res: Response) => {
     // express 5 在没有 `content-type: application/json` 时不给 req.body 兜底成 {}，
     // 而是留成 undefined —— 直接取 .message 会抛 TypeError 变成 500。
-    // 所以这里必须先判 undefined 再判类型。
+    // 所以这里必须先判 undefined 再判类型（spec §11 的 4→5 陷阱之一）。
     const body = req.body as { message?: unknown } | undefined;
     if (typeof body?.message !== 'string' || body.message.trim() === '') {
       res.status(400).json({
@@ -3293,7 +3422,7 @@ export function createApp(deps: AppDeps): Express {
       res.json({
         // `items` 是**本轮新增**的展示项：工具轨迹 + 最终回答。
         // **不含用户那条** —— 前端已经知道自己发了什么，也已经先渲染出来了。
-        // 整段会话的展示项由 GET 提供，两者同一个 foldTranscript，只差范围。
+        // 整段会话的展示项由 GET 提供，两者同一个 foldTranscript，只差范围（spec §9）。
         items: foldTranscript(turn.added),
         stopReason: turn.stopReason,
       });
@@ -3303,7 +3432,7 @@ export function createApp(deps: AppDeps): Express {
         return;
       }
       // 其余交给错误中间件。express 5 会把 async handler 的 rejected promise
-      // 自动转过去 —— 这正是选 express 5 而不是 4 的主要理由
+      // 自动转过去 —— 这正是选 express 5 而不是 4 的主要理由（spec D12）
       throw error;
     }
   });
@@ -3323,7 +3452,7 @@ export function createApp(deps: AppDeps): Express {
   });
 
   // 404 兜底。**不用 `app.get('*')`** —— express 5 的 path-to-regexp v8
-  // 不再接受裸 `*`，会在启动时就抛「Missing parameter name」。
+  // 不再接受裸 `*`，会在启动时就抛「Missing parameter name」（spec §11 的另一个 4→5 陷阱）。
   // 用 app.use 更稳，而且必须返回 JSON：express 默认的 HTML 错误页会让
   // 前端的 res.json() 抛 SyntaxError，表现为一个完全不指向原因的解析错误。
   app.use((_req: Request, res: Response) => {
@@ -3334,7 +3463,7 @@ export function createApp(deps: AppDeps): Express {
   // （express 按函数 arity 识别它，写成 3 参会变成普通中间件）
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     // body-parser 解析失败时抛的 SyntaxError **自带 status: 400**，
-    // 不先放行它就会被当成服务端错误返回 500
+    // 不先放行它就会被当成服务端错误返回 500（spec §13）
     const status = (error as { status?: unknown } | null)?.status;
     if (typeof status === 'number' && status >= 400 && status < 500) {
       res.status(status).json({
@@ -3379,6 +3508,8 @@ git commit -m "feat(server): 引入 express 并实现 REST 接口（建会话 / 
 
 ### Task 10: 进程入口、配置与服务端脚本
 
+对应 spec §3 的「只有 `src/main.ts` 碰 `process`」。
+
 **Files:**
 - Create: `demos/02-agent/apps/server/src/llm/config.ts`
 - Create: `demos/02-agent/apps/server/src/main.ts`
@@ -3386,8 +3517,9 @@ git commit -m "feat(server): 引入 express 并实现 REST 接口（建会话 / 
 - Test: `demos/02-agent/apps/server/test/config.test.ts`、`test/main.test.ts`
 
 **Interfaces:**
-- Consumes: Task 9 的 `createApp`；Task 7 的 `createSessionRegistry` / `newSessionId`
-- Produces: `resolveConfig(env)`；`Config`；一个能 `pnpm start` 起来的服务端进程；
+- Consumes: Task 9 的 `createApp`；Task 7 的 `createSessionRegistry` / `newSessionId`；
+  Task 2 的 `LLMClientConfig`
+- Produces: `resolveConfig(env: NodeJS.ProcessEnv): LLMClientConfig`；一个能 `pnpm start` 起来的服务端进程；
   环境变量 `AI_AGENT_PORT` / `AI_AGENT_HOST`
 
 - [ ] **Step 1: 写失败测试（config）**
@@ -3490,25 +3622,33 @@ import { createToolRegistry } from '@/tools/registry.ts';
 import { createSessionRegistry } from '@/http/session-registry.ts';
 import { createApp } from '@/http/app.ts';
 import { newSessionId } from '@/http/ids.ts';
+import type { LLMClientConfig } from '@/llm/client.ts';
 
 const DEFAULT_PORT = 3000;
-/** 只监听回环地址。这是个本机开发工具，不是可暴露的服务（见 spec D17） */
+/** 只监听回环地址。这是个本机开发工具，不是可暴露的服务（spec D17） */
 const DEFAULT_HOST = '127.0.0.1';
 
-let config;
-try {
-  config = resolveConfig(process.env);
-} catch (error) {
-  process.stderr.write(`[error] ${(error as Error).message}\n`);
-  process.exit(1);
+/**
+ * 读配置。缺 key 就让进程在**启动时**死掉 ——
+ * 带着空 key 起来只会让第一次请求拿到一个 401 再回头猜原因。
+ *
+ * 写成独立函数而不是内联的 try/catch：`process.exit` 的类型是 `never`，
+ * 于是这个函数在所有路径上都满足「有返回值」，不必引入一个可空的 `let config`。
+ */
+function loadConfig(): LLMClientConfig {
+  try {
+    return resolveConfig(process.env);
+  } catch (error) {
+    process.stderr.write(`[error] ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
 }
 
-// 端口 0 表示「由内核分配一个空闲端口」—— 子进程测试靠这个避免端口冲突
-let port = DEFAULT_PORT;
-let host = DEFAULT_HOST;
+const config = loadConfig();
 
-port = Number(process.env.AI_AGENT_PORT ?? DEFAULT_PORT);
-host = process.env.AI_AGENT_HOST ?? DEFAULT_HOST;
+// 端口 0 表示「由内核分配一个空闲端口」—— 子进程测试靠这个避免端口冲突
+const port = Number(process.env.AI_AGENT_PORT ?? DEFAULT_PORT);
+const host = process.env.AI_AGENT_HOST ?? DEFAULT_HOST;
 
 const sessions = createSessionRegistry({ newId: newSessionId, model: config.model });
 
@@ -3517,6 +3657,11 @@ const app = createApp({
   registry: createToolRegistry(),
   sessions,
   model: config.model,
+  // 诊断日志的真实实现放在入口 —— 这是 `src/` 里唯一允许碰 process 的文件，
+  // 也是 `http/app.ts` 的 logError 之所以必填的原因
+  logError: (message: string) => {
+    process.stderr.write(message + '\n');
+  },
 });
 
 const server = app.listen(port, host, () => {
@@ -3658,7 +3803,8 @@ git commit -m "feat(server): 新增进程入口与配置解析，服务端可独
 
 ### Task 11: 前端骨架
 
-`apps/web` 是 workspace 里的一个包，依赖在**阶段根**一次装完。
+`apps/web` 是 workspace 里的一个包，依赖在**阶段根**一次装完（spec §12）。
+本仓库**第一个前端构建步骤**（spec D13）。
 
 **Files:**
 - Create: `demos/02-agent/apps/web/{package.json,tsconfig.json,vite.config.ts,index.html}`
@@ -3721,7 +3867,7 @@ git commit -m "feat(server): 新增进程入口与配置解析，服务端可独
 ```
 
 `verbatimModuleSyntax` 与服务端那条「只当类型用的导入必须写 `import type`」是同一个教训，
-这里直接在类型检查阶段强制它。`types: []` 也是刻意的 —— 前端**不应该**依赖 Node 的类型。
+这里直接在类型检查阶段强制它。`types: []` 也是刻意的 —— 前端**不应该**依赖 Node 的类型（spec §12）。
 
 - [ ] **Step 3: 写 `apps/web/vite.config.ts`**
 
@@ -3735,7 +3881,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // 前端一律用**相对路径** `/api/...`，dev 时由 Vite 反代到服务端。
-      // 因此不需要 CORS 中间件；将来若改成 express.static 同源部署，
+      // 因此不需要 CORS 中间件（spec §12）；将来若改成 express.static 同源部署，
       // 前端代码一行都不用改。
       //
       // 这是整个前端里**唯一**允许出现服务端地址的地方。
@@ -3931,10 +4077,26 @@ body {
 }
 
 .bubble--error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
   align-self: stretch;
   background: var(--warn-bg);
   color: var(--warn);
   font-size: 14px;
+}
+
+/* 错误气泡的关闭按钮（spec §13 要求错误提示可关闭） */
+.bubble__close {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.7;
 }
 
 .tool {
@@ -4025,7 +4187,8 @@ Expected: 三条都成功，`apps/web/dist/` 生成
 
 ```bash
 cd /Users/mawq/workspaces/ai-agent-starter
-git add demos/02-agent/apps/web demos/02-agent/package.json demos/02-agent/pnpm-workspace.yaml demos/02-agent/pnpm-lock.yaml
+git add demos/02-agent/apps/web demos/02-agent/package.json \
+        demos/02-agent/pnpm-workspace.yaml demos/02-agent/pnpm-lock.yaml
 git commit -m "feat(web): 前端骨架（React 19 + Vite 8，proxy 反代 /api）"
 ```
 
@@ -4033,19 +4196,21 @@ git commit -m "feat(web): 前端骨架（React 19 + Vite 8，proxy 反代 /api�
 
 ### Task 12: 前端契约、API 客户端与状态机
 
+对应 spec §12 的「组件与状态」与「类型」。
+
 **Files:**
 - Create: `demos/02-agent/apps/web/src/{types.ts,api.ts,chatReducer.ts}`
 
 **Interfaces:**
 - Consumes: Task 11 的骨架
-- Produces: `TranscriptItem` / `SendMessageResponse` / `HistoryResponse` / `ApiErrorBody`；
+- Produces: `TranscriptItem` / `CreateSessionResponse` / `SendMessageResponse` / `HistoryResponse` / `ApiErrorBody`；
   `ApiError`；`createSession()` / `sendMessage()` / `fetchHistory()`；
-  `ChatState` / `ChatItem` / `Action` / `chatReducer` / `initialChatState`
+  `ChatItem` / `ChatState` / `Action` / `chatReducer` / `initialChatState`
 
 - [ ] **Step 1: 写 `apps/web/src/types.ts`**
 
 ```ts
-// 线上契约的**抄写**。
+// 线上契约的**抄写**（spec D15）。
 //
 // 为什么不跨包 import 服务端的类型：那要把服务端的 @types/node 拖进前端 tsconfig，
 // 而这份 tsconfig 刻意设了 `types: []` —— 前端不应依赖 Node 的类型。
@@ -4077,7 +4242,7 @@ export interface CreateSessionResponse {
  * `POST /api/sessions/:id/messages` 的响应。
  *
  * `items` 是**本轮新增**的展示项（工具轨迹 + 回答），**不含用户那条** ——
- * 前端已经知道自己发了什么。整段会话由 `GET` 提供，两者同一种形状。
+ * 前端已经知道自己发了什么。整段会话由 `GET` 提供，两者同一种形状（spec §9）。
  */
 export interface SendMessageResponse {
   items: TranscriptItem[];
@@ -4171,7 +4336,7 @@ export async function fetchHistory(sessionId: string): Promise<HistoryResponse> 
 
 ```ts
 // 对话框的状态机。**纯函数、不 import React** ——
-// 前端本次没有测试框架，拆成纯模块是为了将来补测试时不必重构（一笔明确的欠账）。
+// 前端本次没有测试框架，拆成纯模块是为了将来补测试时不必重构（spec D14，一笔明确的欠账）。
 
 import type { TranscriptItem } from './types.ts';
 
@@ -4205,6 +4370,7 @@ export type Action =
   | { type: 'history/loaded'; items: TranscriptItem[] }
   | { type: 'session/lost'; notice: string }
   | { type: 'notice/dismiss' }
+  | { type: 'item/dismiss'; id: string }
   | { type: 'user/send'; text: string }
   | { type: 'turn/success'; items: TranscriptItem[] }
   | { type: 'turn/error'; text: string };
@@ -4240,11 +4406,18 @@ export function chatReducer(state: ChatState, action: Action): ChatState {
     case 'session/lost':
       // 会话在服务端没了（重启或淘汰）：清空界面并给一条提示。
       // **不自动新建会话** —— 新建推迟到用户下次发送时，
-      // 否则每刷新一次页面，服务端就多一个没人用的会话（useChat 负责清 ref 与 localStorage）
+      // 否则每刷新一次页面，服务端就多一个没人用的会话
+      // （useChat 负责清 ref 与 localStorage）
       return { ...state, items: [], notice: action.notice, nextId: 1 };
 
     case 'notice/dismiss':
       return { ...state, notice: null };
+
+    case 'item/dismiss':
+      // spec §13 要求前端显示「一条**可关闭的**错误气泡」。
+      // 列表里唯一可关闭的就是错误项：user / assistant / tool 都是对话记录，不该能删；
+      // 顶部那条 notice 走的是 notice/dismiss，与这里无关。
+      return { ...state, items: state.items.filter((item) => item.id !== action.id) };
 
     case 'user/send':
       return {
@@ -4292,13 +4465,16 @@ Expected: 退出码 0
 
 ```bash
 cd /Users/mawq/workspaces/ai-agent-starter
-git add demos/02-agent/apps/web/src/types.ts demos/02-agent/apps/web/src/api.ts demos/02-agent/apps/web/src/chatReducer.ts
+git add demos/02-agent/apps/web/src/types.ts demos/02-agent/apps/web/src/api.ts \
+        demos/02-agent/apps/web/src/chatReducer.ts
 git commit -m "feat(web): 线上契约、API 客户端与对话框状态机"
 ```
 
 ---
 
 ### Task 13: 前端组件与会话恢复
+
+对应 spec §12 的「会话恢复」——**首次发送时才建会话**，以及 404 的静默降级。
 
 **Files:**
 - Create: `demos/02-agent/apps/web/src/useChat.ts`
@@ -4307,14 +4483,14 @@ git commit -m "feat(web): 线上契约、API 客户端与对话框状态机"
 
 **Interfaces:**
 - Consumes: Task 12 的 `chatReducer` / `ApiError` / `createSession` / `sendMessage` / `fetchHistory`
-- Produces: `useChat()`；四个组件；可用的 `App`
+- Produces: `useChat()`（`{ state, send, dismissNotice }`）；四个组件；可用的 `App`
 
 - [ ] **Step 1: 写 `apps/web/src/useChat.ts`**
 
 ```ts
 // 把「reducer + 网络请求 + localStorage」粘在一起。
 //
-// 会话恢复的两个关键决定：
+// 会话恢复的两个关键决定（spec §12）：
 //   1. **首次发送时才建会话**，不是 mount 就建 —— 否则每刷新一次页面，
 //      服务端就多一个没人用的会话（服务端虽然会 FIFO 淘汰，但那是兜底不是设计）
 //   2. 历史读回 404（服务端重启或会话被淘汰）**不报错**，静默清掉本地 id
@@ -4421,8 +4597,10 @@ export function useChat() {
   );
 
   const dismissNotice = useCallback(() => dispatch({ type: 'notice/dismiss' }), []);
+  // 关掉列表里的一条错误气泡（spec §13）
+  const dismissItem = useCallback((id: string) => dispatch({ type: 'item/dismiss', id }), []);
 
-  return { state, send, dismissNotice };
+  return { state, send, dismissNotice, dismissItem };
 }
 ```
 
@@ -4436,7 +4614,7 @@ import type { ChatItem } from '../chatReducer.ts';
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
 
 /**
- * 一次工具调用的轨迹。**这是本次改造最想让人看到的东西** ——
+ * 一次工具调用的轨迹。**这是本项目最想让人看到的东西** ——
  * 模型开了什么调用单、程序传了什么参、工具回了什么。
  *
  * `ok` 为 null 表示「没等到结果」（半截历史），用中性标记而不是红叉 ——
@@ -4464,8 +4642,21 @@ import type { ChatItem } from '../chatReducer.ts';
 
 type BubbleItem = Extract<ChatItem, { kind: 'user' | 'assistant' | 'error' }>;
 
-export function MessageBubble({ item }: { item: BubbleItem }) {
-  return <div className={`bubble bubble--${item.kind}`}>{item.text}</div>;
+/**
+ * `onDismiss` 只对错误气泡传 —— spec §13 要求错误提示是**可关闭的**。
+ * user / assistant 是对话记录，不该能删。
+ */
+export function MessageBubble({ item, onDismiss }: { item: BubbleItem; onDismiss?: () => void }) {
+  return (
+    <div className={`bubble bubble--${item.kind}`}>
+      <span>{item.text}</span>
+      {onDismiss !== undefined && (
+        <button type="button" className="bubble__close" onClick={onDismiss} aria-label="关闭这条错误">
+          ×
+        </button>
+      )}
+    </div>
+  );
 }
 ```
 
@@ -4476,7 +4667,15 @@ import type { ChatItem } from '../chatReducer.ts';
 import { MessageBubble } from './MessageBubble.tsx';
 import { ToolTrace } from './ToolTrace.tsx';
 
-export function MessageList({ items, sending }: { items: ChatItem[]; sending: boolean }) {
+export function MessageList({
+  items,
+  sending,
+  onDismissItem,
+}: {
+  items: ChatItem[];
+  sending: boolean;
+  onDismissItem: (id: string) => void;
+}) {
   return (
     <div className="list">
       {items.length === 0 && !sending && (
@@ -4491,7 +4690,11 @@ export function MessageList({ items, sending }: { items: ChatItem[]; sending: bo
         item.kind === 'tool' ? (
           <ToolTrace key={item.id} item={item} />
         ) : (
-          <MessageBubble key={item.id} item={item} />
+          <MessageBubble
+            key={item.id}
+            item={item}
+            onDismiss={item.kind === 'error' ? () => onDismissItem(item.id) : undefined}
+          />
         ),
       )}
 
@@ -4557,7 +4760,7 @@ import { MessageList } from './components/MessageList.tsx';
 import { useChat } from './useChat.ts';
 
 export default function App() {
-  const { state, send, dismissNotice } = useChat();
+  const { state, send, dismissNotice, dismissItem } = useChat();
 
   return (
     <main className="app">
@@ -4575,7 +4778,11 @@ export default function App() {
         </div>
       )}
 
-      <MessageList items={state.items} sending={state.status === 'sending'} />
+      <MessageList
+        items={state.items}
+        sending={state.status === 'sending'}
+        onDismissItem={dismissItem}
+      />
       <Composer disabled={state.status === 'sending'} onSend={(text) => void send(text)} />
     </main>
   );
@@ -4609,9 +4816,15 @@ cd /Users/mawq/workspaces/ai-agent-starter/demos/02-agent && pnpm -F web dev
 
 1. 问「北京今天天气怎么样？」→ 先出现 `⚙ weather` 轨迹块（含参数与结果），再出现回答气泡
 2. 刷新页面：历史还在（`user / tool / assistant` 三种气泡都渲染出来）
-3. 刷新三次，服务端会话数不涨（未发送时不该新建会话）
+3. **刷新三次不会多建会话** —— 打开浏览器 DevTools 的 Network 面板，
+   连刷三次页面，确认每次只发出 `GET /api/sessions/:id/messages`，
+   **没有任何 `POST /api/sessions`**（第一次发送之前也不该有）。
+   *不要*去数服务端的会话数：`SessionRegistry.size()` 刻意不暴露给 HTTP，
+   在浏览器侧根本观测不到，写「服务端会话数不增长」是一条**没法验证**的验收项。
 4. 杀掉服务端再刷新：出现「会话已失效」的可关闭提示，**不是白屏**
 5. 此时再发一条消息：自动新建会话并正常回答
+6. 让服务端返回一次错误（例如临时改坏 `.env.local` 里的 key 再重启）：
+   界面出现一条红色错误气泡，且**点它的关闭按钮能关掉**（spec §13）
 
 - [ ] **Step 7: 提交**
 
@@ -4626,6 +4839,7 @@ git commit -m "feat(web): 对话框组件、工具轨迹渲染与会话恢复"
 ### Task 14: 文档与既有产物同步
 
 根 `AGENTS.md` 与根 `README.md` 已经在本计划之前改完了，本 Task 只负责 `demos/02-agent/` 自己的文档。
+每份文档的头部 `> 回答：…` 一行**必须与根 `AGENTS.md` 的职责表一致，且只写一个问号**。
 
 **Files:**
 - Create: `demos/02-agent/{README.md,ARCHITECTURE.md,DECISIONS.md,EVALUATION.md}`、`docs/troubleshooting.md`
@@ -4637,9 +4851,9 @@ git commit -m "feat(web): 对话框组件、工具轨迹渲染与会话恢复"
 
 - [ ] **Step 1: 写 `README.md`**
 
-头部必须是 `> 回答：这个项目怎么跑起来？`（与根 `AGENTS.md` 的职责表一致）。至少覆盖：
+头部必须是 `> 回答：这个项目怎么跑起来？`。至少覆盖：
 
-- 项目定位（阶段二 · Tool Calling · 前后端分离）
+- 项目定位（阶段二 · Tool Calling / Agent Loop · 前后端分离）
 - 环境要求（Node ≥ 22、pnpm）
 - **目录结构说明**：阶段根只有编排脚本与文档，两个应用在 `apps/` 下
 - 环境变量表：`DEEPSEEK_API_KEY`（必需）/ `DEEPSEEK_BASE_URL` / `AI_CHAT_MODEL` /
@@ -4660,23 +4874,22 @@ git commit -m "feat(web): 对话框组件、工具轨迹渲染与会话恢复"
 
 头部 `> 回答：这个系统由什么组成，一轮请求实际跑过了哪些步骤？`。至少覆盖：
 
-- 分成图与依赖方向：`http → presentation → core → llm`、`tools → core`、`http → tools`
+- 分层图与依赖方向：`http → presentation → core → llm`、`tools → core`、`http → tools`
 - 依赖规则表（允许 / 禁止），把 `express`、`node:fs`、`req`/`res`、`process.std*` 写进去
-- **三条硬边界的依据**（谁在哪个文件里被强制、哪个测试钉住它）
+- **三条硬边界的依据**（谁在哪个文件里被强制、哪个测试或哪条 grep 钉住它）
 - **一轮请求的完整数据流**：
   `POST /api/sessions/:id/messages` → `sessions.run`（串行锁）→ `runSessionTurn`
   → `client.chat(messages, {tools})` → 有 `tool_calls` → `registry.execute` → 回喂 → 收敛
   → `appendAll(added)` → `foldTranscript(turn.added)` → 200 JSON
-- **`presentation` 这一层为什么存在** —— 它是本次改造的边界所在，
-  说明「`Message` 是按模型需要组织的，展示项是按人的阅读顺序组织的」，
-  以及实时路径与历史路径怎么共用同一个 `foldTranscript`
+- **`presentation` 这一层为什么存在** —— 说明「`Message` 是按模型需要组织的，
+  展示项是按人的阅读顺序组织的」，以及实时路径与历史路径怎么共用同一个 `foldTranscript`
 - `GET` 为什么**不加会话锁**
-- 三个测试接缝各自长什么样
+- 三个测试接缝各自长什么样：`LLMClient` / `ToolRegistry` / `createApp(deps)` + `listen(0)`
 
 - [ ] **Step 3: 写 `DECISIONS.md`**
 
 头部 `> 回答：为什么是这样设计的，放弃了什么？`。
-**逐条抄 spec §17 的 D1–D21**，每条写：理由 / 放弃了什么 / 代价。不要只写结论。
+**逐条抄 spec §18 的 D1–D21**，每条写：理由 / 放弃了什么 / 代价。不要只写结论。
 
 - [ ] **Step 4: 写 `EVALUATION.md`**
 
@@ -4711,6 +4924,8 @@ git commit -m "feat(web): 对话框组件、工具轨迹渲染与会话恢复"
 - **不带 `Content-Type` 的 POST 返回 500 而不是 400** —— express 5 的 `req.body` 是 `undefined`
 - **前端请求触发 CORS 报错** —— 多半是 `api.ts` 里写了绝对地址，绕过了 Vite proxy。
   正解不是加 `cors` 中间件
+- **上游 400 说 tools 结构不对** —— 大概率是 `toWireTools` 少包了一层
+  `{type:'function', function:{…}}`（见 Task 3 Step 1 的核实结论）
 - 再把 01-llm 的三条**跨阶段通用**的坑复制过来：`@/` 别名与 loader、
   不用需要代码变换的 TS 特性、pnpm 的 `--` 不能带
 
@@ -4808,9 +5023,11 @@ pnpm -F web dev       # 终端 B
 2. 问「1+2*3 等于几」→ 看到 `calculator` 轨迹
 3. 问「现在几点」→ 看到 `get_time` 轨迹
 4. 刷新页面 → 历史完整（三种气泡都在）
-5. 连刷三次页面 → 服务端会话数不增长
+5. 连刷三次页面 → **Network 面板里只有 `GET .../messages`，没有 `POST /api/sessions`**
+   （服务端会话数在浏览器侧观测不到，不要写成「会话数不增长」）
 6. 杀掉服务端 → 刷新页面出现「会话已失效」提示而不是白屏；再发消息能自动新建会话
 7. 等待回答期间输入框是禁用的
+8. 制造一次错误（改坏 key 再重启）→ 出现红色错误气泡，**且能点关闭按钮关掉**
 
 - [ ] **Step 5: 如实报告**
 
@@ -4838,10 +5055,8 @@ Build:     N/A（服务端 noEmit）／前端 vite build PASS
 **明确不达标的两项，报告时必须如实写出，不能用「测试全绿」掩盖：**
 
 1. **前端没有自动化测试。** `apps/web/src/chatReducer.ts` 是纯函数、本来最容易测，
-   但本次不引 vitest（spec D14）。它被拆成纯模块是**为了让将来补测试不必重构**，
+   但本项目不引 vitest（spec D14）。它被拆成纯模块是**为了让将来补测试不必重构**，
    不是为了现在有覆盖。前端目前唯一的验证是 Task 13 Step 6 与 Task 15 Step 4 的手动冒烟。
-2. **会话只在服务端内存里，重启即丢。** HTTP 的 `Session` 没有任何持久化，
+2. **会话只在服务端内存里，重启即丢。** HTTP 的 `Session` 没有任何持久化（spec D3），
    服务端一重启，浏览器 `localStorage` 里的 id 就失效（会走「会话已失效」的降级分支）。
-   这是 spec D3 的有意取舍，但半年后回看时不能误以为「刷新不丢」等于「持久化」。
-
-
+   这是有意取舍，但半年后回看时不能误以为「刷新不丢」等于「持久化」。

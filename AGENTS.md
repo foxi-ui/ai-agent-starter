@@ -114,7 +114,7 @@ pnpm -F web build    # 只构建前端
 ## 阶段之间的关系
 
 各阶段是**复制**关系，不是共享依赖 —— 见
-`demos/02-agent/docs/superpowers/specs/2026-09-25-ai-chat-agent-web-design.md` 的 D1「复制 M3 完成态底座」。
+`demos/02-agent/docs/superpowers/specs/2026-09-25-ai-chat-agent-web-design.md` 的 D1「复制而非共享依赖」。
 
 由此推出一条硬规则：
 
