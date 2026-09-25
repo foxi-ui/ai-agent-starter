@@ -1,0 +1,12 @@
+{
+  "name": "ai-chat-agent",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.34.5",
+  "scripts": {
+    "start": "pnpm --filter server start",
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "test": "pnpm --filter server test",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import ./loader.mjs src/main.ts",
+    "dev": "node --watch --env-file-if-exists=.env --env-file-if-exists=.env.local --import ./loader.mjs src/main.ts",
+    "test": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import ./loader.mjs --test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}
