@@ -1307,7 +1307,7 @@ Expected: 全绿（2 条）
 - [ ] **Step 9: 类型检查与全量测试**
 
 Run: `cd demos/02-agent && pnpm run typecheck && pnpm test`
-Expected: typecheck 退出码 0；测试全绿（服务端累计 **120 条**）
+Expected: typecheck 退出码 0；测试全绿（服务端累计 **121 条**）
 
 - [ ] **Step 10: 提交**
 

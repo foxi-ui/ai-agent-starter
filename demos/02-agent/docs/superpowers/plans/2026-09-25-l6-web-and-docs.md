@@ -1314,7 +1314,7 @@ Build:     N/A（服务端 noEmit）／前端 vite build PASS
 ## L6 与整个阶段的完成标准
 
 - `pnpm run typecheck` 通过（两个应用）
-- `pnpm test` 全绿（服务端 **120 条**）
+- `pnpm test` 全绿（服务端 **121 条**）
 - `pnpm -F web build` 成功
 - 浏览器跑通天气例子，且**工具轨迹可见**
 - 五份文档（README / ARCHITECTURE / DECISIONS / EVALUATION / troubleshooting）与代码一致
