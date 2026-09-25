@@ -353,7 +353,7 @@
           <div class="step-n">01</div>
           <div><div class="step-what">读到一行，先存进数组</div>
             <span class="step-code">session.append('user', question)</span>
-            <span class="step-where">src/cli/repl.ts</span></div>
+            <span class="step-where">src/http/app.ts → src/core/agent.ts 的 runSessionTurn</span></div>
         </div>
         <div class="step">
           <div class="step-n">02</div>
@@ -375,9 +375,9 @@
         </div>
         <div class="step">
           <div class="step-n">05</div>
-          <div><div class="step-what">没有 —— 拿到最终答案，打印</div>
-            <span class="step-code">session.appendAll(added); write(final.content)</span>
-            <span class="step-where">src/cli/repl.ts</span></div>
+          <div><div class="step-what">没有 —— 拿到最终答案，折成展示项回给前端</div>
+            <span class="step-code">session.appendAll(added); res.json({ items: foldTranscript(added) })</span>
+            <span class="step-where">src/core/agent.ts → src/presentation/transcript.ts → src/http/app.ts</span></div>
         </div>
       </div>
       <figcaption>
@@ -385,6 +385,13 @@
         <code>registry.execute(...)</code>。其余都是在为这一次函数调用服务：准备参数、回喂结果、整理答案。
       </figcaption>
     </figure>
+
+    <p class="prose">
+      <strong>Agent 只产出事实，界面的事归投影层。</strong> <code>runAgentTurn</code> 返回的
+      <code>final</code> / <code>added</code> / <code>stopReason</code> 里没有任何一个字段是为界面存在的；
+      「调了哪个工具、传了什么、成没成功」全部由 <code>presentation/transcript.ts</code>
+      从 <code>added</code> 推导出来。
+    </p>
   </section>
 
   <!-- ─────────── 2. 天气例子：数组怎么变长 ─────────── -->
@@ -514,11 +521,13 @@
           <tr><td>src/core/types.ts</td><td>定义 <code>Message</code>（含 tool 角色）、<code>ToolCall</code>、<code>Tool</code> —— 契约</td><td>数组元素 + 工具声明的形状</td></tr>
           <tr><td>src/core/tool-registry.ts</td><td><code>ToolRegistry</code> 接口：<code>list()</code> / <code>execute()</code></td><td>工具接缝的契约</td></tr>
           <tr><td>src/core/agent.ts</td><td><code>runAgentTurn</code> 循环：调 → 判断 → 执行 → 回喂，含 <code>maxSteps</code></td><td>02 / 03 / 04 整张循环</td></tr>
-          <tr><td>src/core/session.ts</td><td>维护数组：<code>appendMessage</code> / <code>appendAll</code> / <code>toMessages</code></td><td>01 / 05</td></tr>
+          <tr><td>src/core/session.ts</td><td>维护数组：<code>append</code> / <code>appendMessage</code> / <code>appendAll</code> / <code>toMessages</code></td><td>01 / 05</td></tr>
           <tr><td>src/tools/*</td><td><code>weather</code> / <code>get_time</code> / <code>calculator</code> 的具体实现</td><td>04 的落地</td></tr>
           <tr><td>src/llm/deepseek.ts</td><td>发 <code>tools</code>、解析 <code>tool_calls</code> / <code>finish_reason</code></td><td>02 那一次 fetch</td></tr>
-          <tr><td>src/cli/repl.ts</td><td>每轮调 <code>runAgentTurn</code>、打印、报错</td><td>01 / 05</td></tr>
-          <tr><td>src/index.ts</td><td>组装 client + registry 注入</td><td>循环开始前</td></tr>
+          <tr><td>src/http/app.ts</td><td>路由：把一轮请求交给 <code>runSessionTurn</code>，再把结果投影成 JSON</td><td>01 / 05</td></tr>
+          <tr><td>src/presentation/transcript.ts</td><td>把 <code>Message[]</code> 折叠成展示项（实时与历史共用）</td><td>05 的折叠</td></tr>
+          <tr><td>apps/web/src/components/ToolTrace.tsx</td><td>把展示项渲染成工具轨迹气泡</td><td>04 在浏览器上的样子</td></tr>
+          <tr><td>src/main.ts</td><td>组装 client + registry + 会话表注入</td><td>循环开始前</td></tr>
         </tbody>
       </table>
     </div>
@@ -533,8 +542,9 @@
     <div class="eyebrow">关联知识</div>
     <h2>两个接缝，都能换成假的</h2>
     <p class="prose">
-      阶段一只有 <code>LLMClient</code> 一个接缝。阶段二多了 <code>ToolRegistry</code>。
-      两者都通过 <code>index.ts</code> 注入，于是<strong>整个 Agent 循环都能在没有网络、没有 API key 的情况下断言</strong>——
+      阶段一只有 <code>LLMClient</code> 一个接缝。阶段二多了 <code>ToolRegistry</code>，
+      另外多了一个「端口」接缝：<code>createApp(deps)</code> 只造 app 不 listen，测试才能用临时端口跑它。
+      三者都由 <code>main.ts</code> 装配，于是<strong>整个 Agent 循环都能在没有网络、没有 API key 的情况下断言</strong>——
       测试里塞一个「先说 tool_calls、再给答案」的假 client 和一个「返回 <code>25°C, Sunny</code>」的假 registry 即可。
     </p>
 
@@ -562,7 +572,7 @@
   </section>
 
   <footer>
-    ai-chat-agent · 阶段二 Tool Calling · 源码见 <code>demos/02-agent/src/</code>
+    ai-chat-agent · 阶段二 Tool Calling · 源码见 <code>demos/02-agent/apps/server/src/</code> 与 <code>apps/web/src/</code>
   </footer>
 
 </div>

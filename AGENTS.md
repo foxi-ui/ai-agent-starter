@@ -53,10 +53,10 @@ AI 与人都靠「这个问题该去哪份文档找」来导航。一份文档�
 ## 跨阶段技术约束
 
 新阶段项目**继承**这些约束，不要重新发明。当前有代码的阶段是 `demos/01-llm/`（M1–M3 完成）
-与 `demos/02-agent/`（6 步计划里的 L1–L5 完成：类型契约、工具层、LLM 层、Agent 循环、
-HTTP 服务端都已就位，只剩 L6 的前端与文档）；
-`demos/01-llm/README.md` 与 `ARCHITECTURE.md` 是这些约束的详细出处，
-`demos/02-agent/` 的对应文档要等它的 L6 才建。
+与 `demos/02-agent/`（6 步计划的 L1–L6 全部落地：类型契约、工具层、LLM 层、Agent 循环、
+HTTP 服务端、React 前端）。
+`demos/01-llm/README.md` 与 `ARCHITECTURE.md`、`demos/02-agent/README.md` 与 `ARCHITECTURE.md`
+是这些约束的详细出处。
 
 - **Node ≥ 22**，依赖原生类型擦除直接运行 `.ts`
 - **服务端不引入构建步骤**：无打包、无转译产物，`node --import ./loader.mjs src/**.ts` 直接跑。
@@ -149,3 +149,5 @@ Build:     N/A（noEmit，Node 直接运行 .ts，无构建产物）／前端另
 
 - 跨阶段通用的坑 → 本文件上面各节
 - `demos/01-llm/` 的具体坑 → `demos/01-llm/docs/troubleshooting.md`
+- `demos/02-agent/` 的具体坑 → `demos/02-agent/docs/troubleshooting.md`
+  （express 5 的两个陷阱、服务端测试挂死、前端 CORS 假象、tools 包装层级）
