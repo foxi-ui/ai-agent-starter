@@ -49,7 +49,8 @@ export const weatherTool: ToolDefinition = {
     const hit = WEATHER_TABLE[trimmed.toLowerCase()];
 
     if (!hit) {
-      // 兜底也要**明说是模拟数据** —— 否则模型会把编出来的天气当事实转述给用户
+      // 兜底**这条路径**要明说是模拟数据（命中路径不带这个 note —— 表内数据是真的）
+      // —— 否则模型会把编出来的天气当事实转述给用户
       return {
         ok: true,
         value: { city: trimmed, ...FALLBACK, note: '模拟数据：该城市不在内置表中' },

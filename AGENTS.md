@@ -53,8 +53,9 @@ AI 与人都靠「这个问题该去哪份文档找」来导航。一份文档�
 ## 跨阶段技术约束
 
 新阶段项目**继承**这些约束，不要重新发明。当前有代码的阶段是 `demos/01-llm/`（M1–M3 完成）
-与 `demos/02-agent/`（6 步计划里的 L1 完成，L2–L6 待做）；`demos/01-llm/README.md` 与
-`ARCHITECTURE.md` 是这些约束的详细出处，`demos/02-agent/` 的对应文档要等它的 L6 才建。
+与 `demos/02-agent/`（6 步计划里的 L1–L2 完成，L2 补上了工具层与垂直切片，L3–L6 待做）；
+`demos/01-llm/README.md` 与 `ARCHITECTURE.md` 是这些约束的详细出处，
+`demos/02-agent/` 的对应文档要等它的 L6 才建。
 
 - **Node ≥ 22**，依赖原生类型擦除直接运行 `.ts`
 - **服务端不引入构建步骤**：无打包、无转译产物，`node --import ./loader.mjs src/**.ts` 直接跑。

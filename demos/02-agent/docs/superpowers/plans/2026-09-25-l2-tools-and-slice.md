@@ -136,8 +136,11 @@ test('Beijing 命中内置表', async () => {
 });
 
 test('城市名大小写与首尾空白不影响命中', async () => {
-  const result = await weatherTool.run({ city: '  beijing  ' });
-  assert.strictEqual(result.ok, true);
+  const result = await weatherTool.run({ city: '  Beijing  ' });
+  assert.deepStrictEqual(result, {
+    ok: true,
+    value: { city: 'Beijing', temperature: '25°C', condition: 'Sunny' },
+  });
 });
 
 test('未收录的城市返回兜底值并注明是模拟数据', async () => {
@@ -226,7 +229,8 @@ export const weatherTool: ToolDefinition = {
     const hit = WEATHER_TABLE[trimmed.toLowerCase()];
 
     if (!hit) {
-      // 兜底也要**明说是模拟数据** —— 否则模型会把编出来的天气当事实转述给用户
+      // 兜底**这条路径**要明说是模拟数据（命中路径不带这个 note —— 表内数据是真的）
+      // —— 否则模型会把编出来的天气当事实转述给用户
       return {
         ok: true,
         value: { city: trimmed, ...FALLBACK, note: '模拟数据：该城市不在内置表中' },
@@ -363,10 +367,17 @@ test('缺 expression 参数返回 {ok:false}', async () => {
   assert.strictEqual((await calculatorTool.run({})).ok, false);
 });
 
+test('args 不是对象也不抛错', async () => {
+  assert.strictEqual((await calculatorTool.run(null)).ok, false);
+  assert.strictEqual((await calculatorTool.run('1 + 1')).ok, false);
+});
+
 test('错误文本里带着表达式原文（模型据此才能改）', async () => {
-  const result = await calculate('1 + ');
+  // 这里写 `1 +` 而不是 `1 + `（尾随空格）：实现里 original 取的是 trim 后的值，
+  // 成功路径返回的 expression 也是同一个值 —— 两条路径对「表达式原文」的定义必须一致。
+  const result = await calculate('1 +');
   assert.strictEqual(result.ok, false);
-  assert.ok(!result.ok && result.error.includes('1 + '));
+  assert.ok(!result.ok && result.error.includes('1 +'));
 });
 ```
 
@@ -452,10 +463,16 @@ function evaluate(expression: string): EvalResult {
     return { ok: false, reason: '表达式含不支持的字符（只允许数字、+ - * / ( ) 和空格）' };
   }
 
-  const tokens = tokenize(expression);
-  if (tokens === null || tokens.length === 0) {
+  const parsed = tokenize(expression);
+  if (parsed === null || parsed.length === 0) {
     return { ok: false, reason: '表达式无法解析' };
   }
+
+  // 上面已经把 null 排除掉了，但 TS 不会把这份收窄带进**被提升的函数声明**里：
+  // parseExpr / parseTerm / parseFactor 是 function 声明，流分析对它们一律按
+  // 声明类型 `Token[] | null` 看。这里做一次显式标注，让三个函数看到 `Token[]`。
+  // 纯类型层的事 —— 擦除后的行为与之前完全一致。
+  const tokens: Token[] = parsed;
 
   let pos = 0;
   // 失败原因单独存：递归的每个分支都返回 number | null，
@@ -592,7 +609,7 @@ cd demos/02-agent/apps/server
 node --import ./loader.mjs --test test/tools-time.test.ts
 node --import ./loader.mjs --test test/tools-calculator.test.ts
 ```
-Expected: 两个文件全绿（time 3 条、calculator 10 条）
+Expected: 两个文件全绿（time 3 条、calculator 11 条）
 
 - [ ] **Step 10: 写失败测试（registry）**
 
@@ -694,7 +711,7 @@ node --import ./loader.mjs --test test/tools-weather.test.ts
 node --import ./loader.mjs --test test/tools-time.test.ts
 node --import ./loader.mjs --test test/tools-calculator.test.ts
 ```
-Expected: 四个文件全绿（registry 5 条 + weather 7 条 + time 3 条 + calculator 10 条 = 25 条）
+Expected: 四个文件全绿（registry 5 条 + weather 7 条 + time 3 条 + calculator 11 条 = 26 条）
 
 **不要在这里跑 `pnpm run typecheck` 或 `pnpm test`** —— 它们是红的（deepseek 那条链，
 见本文件 Global Constraints 的例外）。**L3 会把它修掉。**
@@ -754,6 +771,18 @@ import type { Message, ToolCall } from '@/core/types.ts';
  *
  * 这九条用例连起来读，就是 L4 那个循环体的一次迭代 ——
  * 先把一次迭代手工做对，再去写循环。
+ *
+ * **读的时候要分清哪几条是真覆盖、哪几条是旁白：**
+ * - ①④⑦⑧⑨ 打的是**真的** `createToolRegistry()`，它们的负载面是**注册表本身与 `weather.ts`**：
+ *   改坏这两处会红；只改 `calculator.ts` 不会 —— 这九条里没有一条碰它。
+ *   ⑨ 尤其是本文件独有的一条：它走完「解析 → 派发 → 序列化 → 拼两条消息」，
+ *   这条**消息组装接缝**别处没有覆盖。
+ * - ②③⑤⑥ 是**可执行的旁白**：断言的字符串/字面量就在它们上面一两行手写着。
+ *   其中 ②⑥ 的校验发生在编译期（`ToolCall` / `Message` 的类型标注由 `tsc` 把关）；
+ *   ③（`as unknown` 把类型检查关掉了）与 ⑤（字面量直接喂给 `JSON.stringify`）
+ *   则**没有任何东西在检查** —— 既无编译期把关，也无实现依赖。
+ *   留着它们是让读的人**看见**模型那一轮的产出长什么样，
+ *   但**不要把它们算成覆盖率** —— 任何实现改动都不会让它们变红。
  *
  * 为什么不含「参数不是合法 JSON」那条：解析是**循环的职责**（见 L4 的
  * core/agent.ts），注册表拿到的永远是「已经解析好的参数」。这里不越位。
@@ -858,6 +887,9 @@ test('⑨ 连起来：这一串动作就是 L4 那个循环体的一次迭代', 
     { role: 'tool', tool_call_id: toolCall.id, content },
   ];
 
+  // 下面这个字符串由 JSON.stringify 精确匹配，因此它同时钉住了 weather.ts 里
+  // value 的**属性插入顺序**（city, temperature, condition）。
+  // 单纯重排那几个键、行为完全不变，也会让这条变红 —— 那是误报，不是回归。
   assert.deepStrictEqual(added, [
     { role: 'assistant', content: null, tool_calls: [toolCall] },
     {
@@ -890,7 +922,7 @@ git commit -m "test(server): 新增垂直切片，不接模型手工走通一次
 ## L2 的验证：你这一步看见了什么
 
 1. **跑工具层的四个测试文件 + 切片**（命令见 Task 3 Step 12 与 Task 4 Step 2）。
-   Expected: 25 + 9 = **34 条全绿**。
+   Expected: 26 + 9 = **35 条全绿**。
 
 2. **亲眼看见「模型不执行任何函数」** —— 重读 Task 4 的 ② 那条用例。
    整份文件里没有任何一处调用模型，而工具调用照样走通了。这就是证据。

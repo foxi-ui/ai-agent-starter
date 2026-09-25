@@ -18,7 +18,7 @@
 | 阶段目录 | 项目名 | 状态 |
 | --- | --- | --- |
 | `demos/01-llm/` | ai-chat | 进行中：M1、M2、M3（会话持久化）完成，M4–M7 待做 |
-| `demos/02-agent/` | ai-chat-agent | 进行中：monorepo 骨架、`Message` 可辨识联合与 `Session` 纯类已就位（6 步计划里的 L1），L2–L6 待做 |
+| `demos/02-agent/` | ai-chat-agent | 进行中：monorepo 骨架、`Message` 可辨识联合与 `Session` 纯类、工具层与垂直切片已就位（6 步计划里的 L1–L2），L3–L6 待做 |
 | `demos/03-tools/` | — | 未开始 |
 | `demos/04-mcp/` | — | 未开始 |
 | `demos/05-rag/` | — | 未开始 |

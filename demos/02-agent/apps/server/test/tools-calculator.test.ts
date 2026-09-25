@@ -56,6 +56,11 @@ test('缺 expression 参数返回 {ok:false}', async () => {
   assert.strictEqual((await calculatorTool.run({})).ok, false);
 });
 
+test('args 不是对象也不抛错', async () => {
+  assert.strictEqual((await calculatorTool.run(null)).ok, false);
+  assert.strictEqual((await calculatorTool.run('1 + 1')).ok, false);
+});
+
 test('错误文本里带着表达式原文（模型据此才能改）', async () => {
   // 这里写 `1 +` 而不是 `1 + `（尾随空格）：实现里 original 取的是 trim 后的值，
   // 成功路径返回的 expression 也是同一个值 —— 两条路径对「表达式原文」的定义必须一致。
