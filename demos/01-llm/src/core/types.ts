@@ -36,6 +36,11 @@ export interface Message {
  */
 export interface ChatResult {
   content: string;
+  /**
+   * 本次请求的用量。API 未返回 `usage` 字段时为 `undefined`
+   * （而不是全 0 —— 「没拿到」与「真的是 0」是两回事）。
+   */
+  usage?: TokenUsage;
 }
 
 /**
@@ -53,17 +58,45 @@ export type FinishReason =
   | 'aborted';
 
 /**
+ * 一次请求的 token 用量，来自 API 响应的 `usage` 字段。
+ *
+ * **命中与未命中的输入刻意分成两个字段**：单价差 50 倍（高峰 ¥0.04 vs ¥2
+ * per 1M，见 docs/deepseek-api-facts.md），合并成一个 promptTokens 就再也
+ * 还原不出金额 —— 而缓存命中率每轮都不一样，误差方向因此不确定。
+ *
+ * 所有字段都是**归一化后**的结果：上游缺哪个字段就填 0，不会是 undefined。
+ * 归一化的责任在 `llm/deepseek.ts` 的 `toTokenUsage`，不在这里。
+ */
+export interface TokenUsage {
+  /** 输入 token 总数 */
+  promptTokens: number;
+  /** 输出 token 总数（含思考） */
+  completionTokens: number;
+  /** 输入 + 输出 */
+  totalTokens: number;
+  /** 输入中命中 prompt cache 的部分（便宜 50 倍） */
+  cachedTokens: number;
+  /** 输入中未命中 cache 的部分 */
+  cacheMissTokens: number;
+  /** completion 中属于 thinking 的部分 */
+  reasoningTokens: number;
+}
+
+/**
  * 流式响应归一化后的事件。
  *
- * llm 层把「DeepSeek/OpenAI 的 SSE chunk」翻译成这三种事件，
- * cli 层只认这三种，不知道 SSE 的存在。
+ * llm 层把「DeepSeek/OpenAI 的 SSE chunk」翻译成这四种事件，
+ * cli 层只认这四种，不知道 SSE 的存在。
  *
- * 注意：**没有 `usage` 事件**。Token 统计属于 M4b，现在解析了也没有消费者，
- * 与其定义一个没人用的 `TokenUsage` 并连带写测试，不如等 M4b 一起做。
+ * **顺序契约**：`usage` 永远**先于** `done` 产出（D-M4b-2）。
+ * `done` 是终止信号，消费者见到它可能 break 出循环，之后 yield 的事件
+ * 就永远拿不到了 —— usage 先出，保证「收到 done ⇒ 统计已经到手」。
+ * 真实响应里两者常常在**同一个**末 chunk 上（usage 不是独立 chunk）。
  */
 export type StreamEvent =
   | { type: 'text-delta'; text: string }
   | { type: 'reasoning-delta'; text: string }
+  | { type: 'usage'; usage: TokenUsage }
   | { type: 'done'; reason: FinishReason };
 
 /**
