@@ -17,18 +17,25 @@
 - Vision：`deepseek-flash` 支持，`deepseek-v4-pro` 不支持。
 - 旧名 `deepseek-v4-flash`、`deepseek-v4-flash-vision-exp` 已退役（请求仍被服务，按 Flash 计价）。
 
-## 价格（per 1M tokens）
+## 价格（人民币元 / 百万 tokens）
 
-| 模型 | 分类 | 低谷 | 峰值 |
+| 模型 | 分类 | 空闲 | 高峰 |
 |---|---|---|---|
-| deepseek-flash | 输入 cache hit | $0.003 | $0.006 |
-| deepseek-flash | 输入 cache miss | $0.15 | $0.3 |
-| deepseek-flash | 输出 | $0.6 | $1.2 |
-| deepseek-v4-pro | 输入 cache hit | $0.022 | $0.044 |
-| deepseek-v4-pro | 输入 cache miss | $0.66 | $1.32 |
-| deepseek-v4-pro | 输出 | $1.98 | $3.96 |
+| deepseek-flash | 输入 cache hit | ¥0.02 | ¥0.04 |
+| deepseek-flash | 输入 cache miss | ¥1 | ¥2 |
+| deepseek-flash | 输出 | ¥4 | ¥8 |
+| deepseek-v4-pro | 输入 cache hit | ¥0.15 | ¥0.30 |
+| deepseek-v4-pro | 输入 cache miss | ¥4.5 | ¥9.0 |
+| deepseek-v4-pro | 输出 | ¥13.5 | ¥27.0 |
 
-- 低谷 = 峰值的一半；峰值窗口 UTC 周一至周五 01:00–04:00 与 06:00–10:00（不含中国法定节假日）。
+- 空闲 = 高峰的一半；高峰为**北京时间**周一至周五 9:00–12:00 与 14:00–18:00
+  （不含中国法定节假日），其余时间（含周末与法定节假日全天）为空闲。
+- 来源：<https://api-docs.deepseek.com/zh-cn/quick_start/pricing/>（2026-09-28 抓取）。
+
+> **本表原先记的是美元**（flash `$0.006 / $0.3 / $1.2`）。换算回去，flash 的比值是 6.67、
+> pro 是 6.82 —— **两组不一致**，说明那是一组独立凑的整数，不是按某个汇率算出来的。
+> 已于 2026-09-28 整表替换为官方原值：**只有人民币一个口径**，不再有第二个数字可以在
+> 报告成本时被无意识地混用（这正是 2026-09-24 那次「两个口径混用」踩坑的形状）。
 
 ## 接口
 
