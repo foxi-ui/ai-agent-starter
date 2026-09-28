@@ -17,7 +17,7 @@
 
 | 阶段目录 | 项目名 | 状态 |
 | --- | --- | --- |
-| `demos/01-llm/` | ai-chat | 进行中：M1、M2、M3（会话持久化）完成，M4–M7 待做 |
+| `demos/01-llm/` | ai-chat | 进行中：M1、M2、M3（会话持久化）、M4a（上下文预算 + `--show-reasoning` / `--no-thinking`）完成，M4b–M7 待做 |
 | `demos/02-agent/` | ai-chat-agent | 6 步全部落地：类型契约、工具层、LLM 层、Agent 循环、HTTP 服务端、React 前端，四件套文档齐备。**全量质量门（`pnpm test` / `typecheck` / 端到端冒烟）尚待统一执行** —— 见 `demos/02-agent/EVALUATION.md` |
 | `demos/03-tools/` | — | 未开始 |
 | `demos/04-mcp/` | — | 未开始 |
