@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { Readable, Writable } from 'node:stream';
 import { runRepl, SYSTEM_PROMPT } from '@/cli/repl.ts';
 import { DEFAULT_MAX_CONTEXT } from '@/cli/args.ts';
+import { estimateTokens } from '@/core/context.ts';
 import type { SessionChange, SessionStore } from '@/core/journal.ts';
+import type { UsageEntry } from '@/core/usage.ts';
+import type { Message, TokenUsage } from '@/core/types.ts';
 import type { LLMClient } from '@/llm/client.ts';
 
 function collector(): { chunks: string[]; stream: Writable } {
@@ -127,6 +130,7 @@ test('一问一答：输出是 You:/AI: 交替的对话记录', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     showReasoning: false,
     noThinking: false,
@@ -158,6 +162,7 @@ test('多轮：每一问前都有 You: 提示符，每一答前都有 AI: 前缀
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     showReasoning: false,
     noThinking: false,
@@ -177,6 +182,7 @@ test('失败轮次不输出 AI: 前缀', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     showReasoning: false,
     noThinking: false,
@@ -200,6 +206,7 @@ test('错误写 stderr，不污染 stdout', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     showReasoning: false,
     noThinking: false,
@@ -224,6 +231,7 @@ test('非 2xx 错误不崩溃，继续下一轮', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     showReasoning: false,
     noThinking: false,
@@ -254,6 +262,7 @@ test('多轮对话上下文按序累积', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     showReasoning: false,
     noThinking: false,
@@ -289,6 +298,7 @@ test('正文逐字写 stdout，思考指示只写 stderr', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     model: 'deepseek-flash',
     showReasoning: false,
@@ -323,6 +333,7 @@ test('流中途失败：不追加 assistant，且补上收尾换行', async () =
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     model: 'deepseek-flash',
     showReasoning: false,
@@ -366,6 +377,7 @@ test('流中途失败：收尾换行写在该行的错误之前（跨流字节�
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     model: 'deepseek-flash',
     showReasoning: false,
@@ -397,6 +409,7 @@ test('/clear 之后下一轮的 messages 只剩 system 与当前提问', async (
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     model: 'deepseek-flash',
     showReasoning: false,
@@ -434,6 +447,7 @@ test('命令本身不进入上下文', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     model: 'deepseek-flash',
     showReasoning: false,
@@ -473,6 +487,7 @@ test('/model 切换后下一轮请求带上新模型', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     model: 'deepseek-flash',
     showReasoning: false,
@@ -504,6 +519,7 @@ test('未知命令走 stderr，且不触发请求', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     model: 'deepseek-flash',
     showReasoning: false,
@@ -540,6 +556,7 @@ test('未知命令之后循环继续，不是 break 出 REPL', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     model: 'deepseek-flash',
     showReasoning: false,
@@ -564,6 +581,7 @@ test('/history 的列表走 stdout', async () => {
     prompt: 'You: ',
     sessionId: '20260924-143022-a3f1',
     history: [],
+    usageEntries: [],
     store: fakeStore(),
     model: 'deepseek-flash',
     showReasoning: false,
@@ -599,6 +617,7 @@ test('一轮对话落两条记录：user 与 assistant，用的是本次会话�
     model: 'deepseek-flash',
     sessionId: SESSION_ID,
     history: [],
+    usageEntries: [],
     store,
     showReasoning: false,
     noThinking: false,
@@ -626,6 +645,7 @@ test('/clear 与 /model 的变更也落盘（它们在 executeCommand 内部改�
     model: 'deepseek-flash',
     sessionId: SESSION_ID,
     history: [],
+    usageEntries: [],
     store,
     showReasoning: false,
     noThinking: false,
@@ -655,6 +675,7 @@ test('只读命令一条记录都不写', async () => {
     model: 'deepseek-flash',
     sessionId: SESSION_ID,
     history: [],
+    usageEntries: [],
     store,
     showReasoning: false,
     noThinking: false,
@@ -691,6 +712,7 @@ test('落盘失败：stderr 恰好一行警告，且对话继续（内存照常�
     model: 'deepseek-flash',
     sessionId: SESSION_ID,
     history: [],
+    usageEntries: [],
     store,
     showReasoning: false,
     noThinking: false,
@@ -748,6 +770,7 @@ test('传入的 history 流进第一轮请求（--resume 后「模型记得」�
       { role: 'user', content: '用一句话说明什么是闭包' },
       { role: 'assistant', content: '闭包是函数与其词法作用域的组合' },
     ],
+    usageEntries: [],
     store,
     showReasoning: false,
     noThinking: false,
@@ -795,6 +818,7 @@ test('maxContext 生效：发给模型的是裁过的，落盘的仍是完整历
       { role: 'user', content: '旧问题二' },
       { role: 'assistant', content: '旧回答二' },
     ],
+    usageEntries: [],
     store,
     showReasoning: false,
     noThinking: false,
@@ -833,6 +857,7 @@ test('未裁剪时 stderr 不出现上下文警告', async () => {
     model: 'deepseek-flash',
     sessionId: SESSION_ID,
     history: [],
+    usageEntries: [],
     store,
     showReasoning: false,
     noThinking: false,
@@ -866,6 +891,7 @@ test('noThinking 为真时，ChatOptions 里带 thinking: false', async () => {
     model: 'deepseek-flash',
     sessionId: SESSION_ID,
     history: [],
+    usageEntries: [],
     store,
     showReasoning: false,
     noThinking: true,
@@ -899,6 +925,7 @@ test('noThinking 为假时，ChatOptions 里连 thinking 键都没有', async ()
     model: 'deepseek-flash',
     sessionId: SESSION_ID,
     history: [],
+    usageEntries: [],
     store,
     showReasoning: false,
     noThinking: false,
@@ -931,6 +958,7 @@ test('showReasoning 为真时，思考全文出现在 stderr 而 stdout 干净',
     model: 'deepseek-flash',
     sessionId: SESSION_ID,
     history: [],
+    usageEntries: [],
     store,
     showReasoning: true,
     noThinking: false,
@@ -942,4 +970,150 @@ test('showReasoning 为真时，思考全文出现在 stderr 而 stdout 干净',
   // EOF 那次也会写，所以输出以它结尾。这里逐字节钉住，顺带确认
   // stdout 里没有「我先想想」——思考一个字都不能落进答案文件。
   assert.equal(chunks.join(''), 'You: AI: 答案\nYou: ');
+});
+
+// ── 账本接线（M4b） ───────────────────────────────────────────────────
+
+/**
+ * 带 usage 的假 client。
+ *
+ * 既有的 `fakeClient` 不吐 usage 事件，所以那些用例天然走「不记账」分支；
+ * 这里要的是相反的情况。事件顺序照抄真实契约：正文 → usage → done。
+ */
+function fakeClientWithUsage(answers: string[], usage: TokenUsage): LLMClient {
+  let i = 0;
+  return {
+    async chat() {
+      return { content: answers[i++] ?? '', usage };
+    },
+    async *chatStream() {
+      const content = answers[i++] ?? '';
+      yield { type: 'text-delta', text: content };
+      yield { type: 'usage', usage };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+}
+
+const USAGE: TokenUsage = {
+  promptTokens: 1203,
+  completionTokens: 456,
+  totalTokens: 1659,
+  cachedTokens: 1024,
+  cacheMissTokens: 179,
+  reasoningTokens: 120,
+};
+
+/** 跑一次 REPL，省掉每个用例都抄一遍 options */
+async function runWith(
+  client: LLMClient,
+  options: {
+    lines: string[];
+    store: SessionStore;
+    history?: Message[];
+    usageEntries?: UsageEntry[];
+    maxContext?: number;
+  },
+): Promise<{ out: string; err: string }> {
+  const { chunks, stream, errChunks, errStream } = captureOutput();
+  await runRepl(client, {
+    input: inputFrom(options.lines),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: options.history ?? [],
+    usageEntries: options.usageEntries ?? [],
+    store: options.store,
+    showReasoning: false,
+    noThinking: false,
+    maxContext: options.maxContext ?? DEFAULT_MAX_CONTEXT,
+  });
+  return { out: chunks.join(''), err: errChunks.join('') };
+}
+
+/** 从落盘记录里挑出 usage 那些 */
+function usageWrites(writes: Array<{ id: string; change: SessionChange }>) {
+  return writes
+    .map((w) => w.change)
+    .filter((c): c is Extract<SessionChange, { type: 'usage' }> => c.type === 'usage');
+}
+
+test('一轮成功后落盘一行 usage 记录，带合法 ISO 时刻', async () => {
+  const { store, writes } = recordingStore();
+
+  await runWith(fakeClientWithUsage(['你好'], USAGE), { lines: ['hi'], store });
+
+  const recorded = usageWrites(writes);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].entry.model, 'deepseek-flash');
+  assert.deepEqual(recorded[0].entry.usage, USAGE);
+  // 时刻必须能被 Date 解析 —— 金额按它分峰谷（D-M4b-13）
+  assert.equal(Number.isNaN(Date.parse(recorded[0].entry.at)), false);
+});
+
+test('estimatedPromptTokens 取的是**裁剪后**的估算', async () => {
+  // 这条才测得到 M4a 的裁剪与 M4b 的估算有没有接对：
+  // 用完整历史的估算会得到一个虚高的偏差，而偏差率正是 /usage 要给人看的
+  const { store, writes } = recordingStore();
+  const history: Message[] = [
+    { role: 'user', content: 'u'.repeat(300) },
+    { role: 'assistant', content: 'a'.repeat(300) },
+  ];
+
+  await runWith(fakeClientWithUsage(['你好'], USAGE), {
+    lines: ['hi'],
+    store,
+    history,
+    maxContext: 50, // 极小：system + 两轮历史必然超预算
+  });
+
+  const recorded = usageWrites(writes);
+  assert.equal(recorded.length, 1);
+
+  const fullEstimate =
+    estimateTokens(SYSTEM_PROMPT) +
+    estimateTokens('u'.repeat(300)) +
+    estimateTokens('a'.repeat(300)) +
+    estimateTokens('hi');
+
+  assert.ok(
+    recorded[0].entry.estimatedPromptTokens < fullEstimate,
+    `裁剪后 ${recorded[0].entry.estimatedPromptTokens} 应小于完整历史 ${fullEstimate}`,
+  );
+});
+
+test('失败的轮次不记账、不落盘 usage', async () => {
+  const { store, writes } = recordingStore();
+
+  await runWith(fakeClient([new Error('boom')]), { lines: ['hi'], store });
+
+  // 中断的轮次拿不到 usage，记一笔残缺的会让账本看起来完整、实则错
+  assert.equal(usageWrites(writes).length, 0);
+});
+
+test('响应没有 usage 时不记账（既有 fakeClient 就是这种情况）', async () => {
+  const { store, writes } = recordingStore();
+
+  await runWith(fakeClient(['你好']), { lines: ['hi'], store });
+
+  assert.equal(usageWrites(writes).length, 0);
+});
+
+test('usage 落盘失败时对话继续，且只警告一次', async () => {
+  const { store, attempts } = failingStore('磁盘满了');
+
+  const { out, err } = await runWith(fakeClientWithUsage(['你好', '再见'], USAGE), {
+    lines: ['hi', 'bye'],
+    store,
+  });
+
+  assert.ok(attempts() > 0);
+  // 与 message 落盘失败**共用**同一条降级路径（reportWriteFailure），
+  // 所以警告仍然恰好一行，而不是每轮刷一句
+  assert.equal(err.match(/\[警告\]/g)?.length, 1, `stderr：${err}`);
+  // 对话继续：两轮回答都出来了
+  assert.match(out, /你好/);
+  assert.match(out, /再见/);
 });

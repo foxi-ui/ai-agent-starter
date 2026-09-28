@@ -11,6 +11,7 @@ import { resolveConfig, type Config } from '@/cli/config.ts';
 import { parseArgs, type Args } from '@/cli/args.ts';
 import { createFileStore } from '@/cli/store.ts';
 import { replay, makeSessionId, type LoadedSession } from '@/core/journal.ts';
+import type { UsageEntry } from '@/core/usage.ts';
 import { createDeepSeekClient } from '@/llm/deepseek.ts';
 import type { Message } from '@/core/types.ts';
 
@@ -40,6 +41,8 @@ const store = createFileStore(sessionDir);
 let sessionId: string;
 let model: string;
 let history: Message[];
+// 账本初值。新会话保持空数组，--resume 时由回放填上（D-M4b-3）
+let usageEntries: UsageEntry[] = [];
 
 if (args.kind === 'resume') {
   sessionId = args.id;
@@ -68,6 +71,7 @@ if (args.kind === 'resume') {
 
   const replayed = replay(loaded.records);
   history = replayed.messages;
+  usageEntries = replayed.usageEntries;
   // 文件里没记过模型（没有 meta 也没有 model 记录）时回落到环境变量的模型
   model = replayed.model ?? config.model;
 
@@ -101,6 +105,7 @@ runRepl(createDeepSeekClient(config), {
   model,
   sessionId,
   history,
+  usageEntries,
   store,
   // 三个开关原样透传。它们是「本次启动的偏好」而不是会话状态，
   // 所以不进 Session、也不落盘（见 DECISIONS D-M4a-7）

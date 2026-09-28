@@ -343,3 +343,66 @@ test('缺少 DEEPSEEK_API_KEY 时提示到 stderr 并以退出码 1 退出', asy
   // 提示信息跑到 stdout 会让 `> answers.txt` 收到一行垃圾
   assert.equal(result.stdout, '');
 });
+
+// ── usage 记录的回放（M4b） ───────────────────────────────────────────
+
+const USAGE_LINE = JSON.stringify({
+  type: 'usage',
+  entry: {
+    at: '2026-09-28T02:00:00.000Z', // 周一北京 10:00 → 高峰
+    model: 'deepseek-flash',
+    usage: {
+      promptTokens: 1203,
+      completionTokens: 456,
+      totalTokens: 1659,
+      cachedTokens: 1024,
+      cacheMissTokens: 179,
+      reasoningTokens: 120,
+    },
+    estimatedPromptTokens: 1180,
+  },
+});
+
+test('--resume 一个含 usage 行的文件：/usage 的累计包含历史', async (t) => {
+  // 覆盖的是**接线**：usage 记录要从 JSONL 回放出来，经 index.ts 一路传进
+  // runRepl，再由 /usage 读出来。分段测试看不出中间哪一环丢了 ——
+  // 而丢了的表现是一个偏小却看不出问题的总数。
+  const home = tempHome(t);
+  writeSessionFile(home, SESSION_ID, [META_LINE, USER_LINE, ASSISTANT_LINE, USAGE_LINE]);
+
+  const result = await runCli(runEnv(home), {
+    args: ['--resume', SESSION_ID],
+    stdin: ['/usage'],
+  });
+
+  assert.equal(result.code, 0);
+  // 空账本会打印「还没有用量记录」—— 出现它就说明历史没接上
+  assert.ok(
+    !result.stdout.includes('还没有用量记录'),
+    `历史 usage 没被回放：${result.stdout}`,
+  );
+  assert.match(result.stdout, /1 轮/);
+  assert.match(result.stdout, /deepseek-flash/);
+  // 数字确实来自那一行
+  assert.match(result.stdout, /1,203/);
+  assert.match(result.stdout, /1,024/);
+});
+
+test('损坏的 usage 行当坏行跳过，账本为空但会话照常恢复', async (t) => {
+  const home = tempHome(t);
+  // 缺 usage 子字段的记录 —— 校验应当拒掉它，而不是补 0 混过去
+  writeSessionFile(home, SESSION_ID, [
+    META_LINE,
+    USER_LINE,
+    '{"type":"usage","entry":{"at":"2026-09-28T02:00:00.000Z"}}',
+  ]);
+
+  const result = await runCli(runEnv(home), {
+    args: ['--resume', SESSION_ID],
+    stdin: ['/usage'],
+  });
+
+  assert.equal(result.code, 0);
+  assert.match(result.stderr, /\[警告\] 已跳过 1 行无法解析的记录/);
+  assert.match(result.stdout, /还没有用量记录/);
+});

@@ -9,8 +9,8 @@ import { Session } from '@/core/session.ts';
 import { fitToBudget } from '@/core/context.ts';
 import { parseCommand, executeCommand } from '@/core/commands.ts';
 import { createStreamRenderer, renderCommandResult, renderUnknownCommand } from '@/cli/render.ts';
-import { UsageLedger } from '@/core/usage.ts';
-import type { ChatOptions, Message } from '@/core/types.ts';
+import { UsageLedger, type UsageEntry } from '@/core/usage.ts';
+import type { ChatOptions, Message, TokenUsage } from '@/core/types.ts';
 import type { SessionStore } from '@/core/journal.ts';
 import type { LLMClient } from '@/llm/client.ts';
 
@@ -43,6 +43,13 @@ export interface ReplOptions {
   sessionId: string;
   /** 恢复出来的历史消息；新会话传空数组 */
   history: Message[];
+  /**
+   * 从 JSONL 回放出的账本记录；新会话传空数组。
+   *
+   * 与 `history` 同一个处置：账本是**会话文件级**的累计，
+   * 所以 --resume 时接着算，而不是从零开始（D-M4b-3）。
+   */
+  usageEntries: UsageEntry[];
   /** 会话存储。落盘失败时的降级策略见下面的 onChange */
   store: SessionStore;
   /**
@@ -108,6 +115,11 @@ export async function runRepl(
     },
   });
 
+  // 账本只覆盖本会话文件 —— 起点是回放出来的历史记录。
+  // 它**不**参与 Session 的 onChange 广播（D-M4b-16）：账本不是会话消息，
+  // 落盘由下面那段显式调用完成。
+  const ledger = new UsageLedger(options.usageEntries);
+
   // 提示符**刻意不补换行**：它要和用户输入处在同一行（终端会回显输入），
   // 补了换行就会把问题顶到下一行，与文档里的 `You: 什么是...` 不符
   const writePrompt = () => {
@@ -148,9 +160,7 @@ export async function runRepl(
         const result = executeCommand(parsed.name, parsed.argument, session, {
           store: options.store,
           currentSessionId: options.sessionId,
-          // TODO(M4b Task 10)：换成 runRepl 里那个真实的账本。
-          // 这里先放一个空的只为让类型通过 —— 此时 /usage 恒为空。
-          ledger: new UsageLedger(),
+          ledger,
         });
         // 命令结果走 stdout：用户主动索要的输出
         renderCommandResult(result, { output: options.output });
@@ -166,9 +176,10 @@ export async function runRepl(
         showReasoning: options.showReasoning,
       });
 
-      // 本轮正文。渲染器只呈现，累积是这里的职责 ——
+      // 本轮正文与用量。渲染器只呈现，累积是这里的职责 ——
       // 因为只有攒出完整文本才能写进 Session 当上下文。
       let text = '';
+      let usage: TokenUsage | null = null;
 
       try {
         // 组装 → **裁剪** → 请求。
@@ -196,6 +207,7 @@ export async function runRepl(
         for await (const event of stream) {
           renderer.onEvent(event);
           if (event.type === 'text-delta') text += event.text;
+          else if (event.type === 'usage') usage = event.usage;
         }
 
         // 只在成功之后才记录 AI 的回答。
@@ -205,6 +217,29 @@ export async function runRepl(
         // 注意：流中途失败时屏幕上会留下半截回答，但它**不会**进入上下文。
         // 「屏幕上看到的」与「模型记得的」是两回事。
         session.append('assistant', text);
+
+        // **只在成功路径记账**：中断的轮次（超时、连接断）走 catch 分支，
+        // 那时 API 侧可能已经为已生成的部分计费，但我们拿不到那个 usage ——
+        // 记一笔残缺的会让账本看起来完整、实则错。宁可偏低且可解释。
+        if (usage) {
+          const entry: UsageEntry = {
+            // 时刻在这里定格：金额按它分峰谷，事后再算就晚了（D-M4b-13）
+            at: new Date().toISOString(),
+            model: session.model,
+            usage,
+            // 裁剪**之后**的估算 —— 它要和真实的 prompt_tokens 对得上，
+            // 而后者描述的是「这一次实际发出去的东西」
+            estimatedPromptTokens: fitted.keptTokens,
+          };
+          ledger.record(entry);
+          try {
+            // 与 Session 那条落盘路径共用 reportWriteFailure：
+            // 「写盘失败只警告一次」这条降级自动覆盖 usage 记录
+            options.store.append(options.sessionId, { type: 'usage', entry });
+          } catch (error) {
+            reportWriteFailure(error);
+          }
+        }
       } catch (error) {
         // 最小错误处理：打印错误后继续循环。
         // 不崩溃，也不污染上下文——失败的轮次不留 assistant 消息。
