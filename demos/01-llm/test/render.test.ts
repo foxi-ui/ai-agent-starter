@@ -338,3 +338,48 @@ test('renderCommandResult /sessions 的时间列按 id 精确切片', () => {
       '  20261231-235959-ffff  12-31 23:59  1 条\n',
   );
 });
+
+// ── usage 事件（M4b） ─────────────────────────────────────────────────
+
+test('usage 事件不产生任何输出', () => {
+  // 这条测的是一个**安静的**错误：渲染器的最后一个分支是隐式的 done，
+  // 加了 usage 变体之后它会掉进去，写出一个空的 `AI: ` 前缀 ——
+  // 屏幕上多一行、重定向到文件里也多一行，而没有任何报错。
+  //
+  // 用量是用户敲 /usage 才看的东西，不该混进 stdout（D-M4b-7）。
+  const { out, err, renderer } = setup();
+
+  renderer.onEvent({
+    type: 'usage',
+    usage: {
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+      cachedTokens: 5,
+      cacheMissTokens: 5,
+      reasoningTokens: 2,
+    },
+  });
+  renderer.finish();
+
+  // out.chunks / err.chunks 是本文件既有 collector() 的形状
+  assert.deepEqual(out.chunks, []);
+  assert.deepEqual(err.chunks, []);
+});
+
+test('usage 夹在正文与 done 之间时，正文与前缀不受影响', () => {
+  const { out, err, renderer } = setup();
+
+  const u = {
+    promptTokens: 1, completionTokens: 1, totalTokens: 2,
+    cachedTokens: 0, cacheMissTokens: 1, reasoningTokens: 0,
+  };
+  renderer.onEvent({ type: 'text-delta', text: '你好' });
+  renderer.onEvent({ type: 'usage', usage: u });
+  renderer.onEvent({ type: 'done', reason: 'stop' });
+  renderer.finish();
+
+  // `AI: ` 前缀只写一次；usage 事件不额外产生前缀
+  assert.equal(out.chunks.join(''), 'AI: 你好\n');
+  assert.deepEqual(err.chunks, []);
+});

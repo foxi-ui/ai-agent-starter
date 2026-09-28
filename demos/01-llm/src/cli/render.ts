@@ -95,6 +95,18 @@ export function createStreamRenderer(options: {
         return;
       }
 
+      if (event.type === 'usage') {
+        // **必须显式写出来，不能靠 fallthrough。**
+        //
+        // 这个 if 链的最后一个分支是隐式的 done（「走到这里的一定是 done」），
+        // 加了 usage 变体之后那句话不再成立 —— 不拦它的话每个末 chunk 都会
+        // 掉进 done 分支，多写一个 `AI: ` 前缀，且 finish_reason 的截断判断
+        // 会读到 undefined。这个错误编译不报、只在输出形状上现形。
+        //
+        // 用量由 /usage 按需展示，不往 stdout 里插（D-M4b-7）。
+        return;
+      }
+
       // done
       // 整轮一个字都没来时也要补上前缀 —— 非流式路径对空回答同样会写出
       // `AI: `（`write(\`AI: ${content}\`)` 里 content 是空串），
