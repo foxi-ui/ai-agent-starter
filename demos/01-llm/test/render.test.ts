@@ -469,3 +469,33 @@ test('/usage 有超出节假日表范围的记录时给出提示', () => {
 test('/usage 全是 2026 的记录时不出现过期提示', () => {
   assert.doesNotMatch(renderUsage([sampleEntry()]), /节假日表只覆盖/);
 });
+
+test('/usage 时段拆分同时报金额与各档轮次', () => {
+  // 这条此前**没有任何用例覆盖**（要触发它得有 ≥2 条记录、两档都出现、且都有价目）。
+  // 只报金额的话，用户无法判断「空闲那部分便宜」是因为单价低还是因为轮次少
+  const text = renderUsage([
+    sampleEntry(),                                   // 周一北京 10:00 → 高峰
+    sampleEntry({ at: '2026-09-28T05:00:00.000Z' }), // 周一北京 13:00 → 空闲
+  ]);
+  assert.match(text, /时段拆分：高峰 1 轮 ¥[\d.]+ \/ 空闲 1 轮 ¥[\d.]+/);
+});
+
+test('/usage 合计行与数据行等宽（「合计」比「#」宽，不能只按表头算列宽）', () => {
+  const lines = renderUsage([sampleEntry()]).split('\n');
+  const width = (s: string): number => {
+    let w = 0;
+    for (const ch of s) w += /[一-鿿]/.test(ch) ? 2 : 1;
+    return w;
+  };
+  const dataLine = lines.find((l) => l.includes('deepseek-flash'))!;
+  const totalLine = lines.find((l) => l.includes('合计'))!;
+  // 「合计」两个字宽 4，而 0 号列的内容是 `#` / `1`（宽 1）——
+  // 列宽若只由表头与数据行算出，合计行会右移 3 列、并比分隔线长 3 列
+  assert.equal(width(totalLine), width(dataLine));
+});
+
+test('/usage 口径行写明「未计入中断的轮次」', () => {
+  // 账本偏低的主要来源就是它，且是唯一无法从输出反推的偏差 ——
+  // 20 轮里 6 轮超时的话，用户看到 14 轮 +\n 一个没有任何线索的总额
+  assert.match(renderUsage([sampleEntry()]), /未计入中断的轮次/);
+});

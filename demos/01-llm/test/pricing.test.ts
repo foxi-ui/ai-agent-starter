@@ -16,16 +16,23 @@ import { priceFor } from '@/core/usage.ts';
 const docPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'deepseek-api-facts.md');
 
 /** 文档表格里的行：`| deepseek-flash | 输入 cache hit | ¥0.02 | ¥0.04 |` */
-function parseRow(line: string): { model: string; kind: string; peak: number } | null {
+function parseRow(line: string): {
+  model: string;
+  kind: string;
+  offPeak: number;
+  peak: number;
+} | null {
   const cells = line.split('|').map((c) => c.trim());
   // 首尾各有一个空串（行以 | 开头结尾）
   if (cells.length < 6) return null;
 
-  const [, model, kind, , peak] = cells;
-  const match = /^¥([\d.]+)$/.exec(peak);
-  if (!/^deepseek-/.test(model) || match === null) return null;
+  // 列序是 `| 模型 | 分类 | 空闲 | 高峰 |` —— 第 4 格是**高峰**
+  const [, model, kind, offPeak, peak] = cells;
+  const peakMatch = /^¥([\d.]+)$/.exec(peak);
+  const offPeakMatch = /^¥([\d.]+)$/.exec(offPeak);
+  if (!/^deepseek-/.test(model) || peakMatch === null || offPeakMatch === null) return null;
 
-  return { model, kind, peak: Number(match[1]) };
+  return { model, kind, offPeak: Number(offPeakMatch[1]), peak: Number(peakMatch[1]) };
 }
 
 const doc = readFileSync(docPath, 'utf8');
@@ -53,6 +60,14 @@ for (const { model, kind, field } of expected) {
       price[field],
       row.peak,
       `${model} 的 ${kind}：文档写 ¥${row.peak}，代码写 ${price[field]}`,
+    );
+
+    // **「空闲」那一列也要核**：代码里只有高峰价（空闲由 `×0.5` 推出），
+    // 只比对高峰列的话，文档把空闲列写错（或两列写反）不会有任何测试变红
+    assert.equal(
+      row.offPeak,
+      row.peak / 2,
+      `${model} 的 ${kind}：文档的空闲价 ¥${row.offPeak} 不是高峰价 ¥${row.peak} 的一半`,
     );
   });
 }

@@ -752,3 +752,113 @@ test('chat()：响应没有 usage 时是 undefined（不是全 0）', async () =
   const result = await client.chat([{ role: 'user', content: 'hi' }]);
   assert.equal(result.usage, undefined);
 });
+
+// ── 回落链的 null 短路与非嵌套形状（审查后补） ────────────────────────
+
+/** 取出流里唯一那个 usage 事件 */
+async function usageOf(response: Response) {
+  mockFetch(async () => response);
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  return events.find((e) => e.type === 'usage');
+}
+
+test('流式：usage 为 null 时不产出事件，而不是归一化成全 0', async () => {
+  // `null` 是「本 chunk 没有用量」的常见写法。写成 `!== undefined` 的话它会掉进
+  // 归一化，变成一份**全 0 的用量**，于是这一轮以 ¥0.00000 记进账本 ——
+  // 看起来完整、实际少了钱，正是 D54 花力气避免的形状
+  mockFetch(async () =>
+    sseResponse([enc.encode(sseChunk(finalChunkWithUsage(null as never)))]),
+  );
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  assert.deepEqual(events.map((e) => e.type), ['done']);
+});
+
+test('chat()：usage 为 null 时是 undefined，不是全 0', async () => {
+  mockFetch(async () =>
+    jsonResponse({
+      choices: [{ message: { role: 'assistant', content: '你好' } }],
+      usage: null,
+    }),
+  );
+  const client = createDeepSeekClient(config);
+  const result = await client.chat([{ role: 'user', content: 'hi' }]);
+  assert.equal(result.usage, undefined);
+});
+
+test('流式：嵌套字段是 null 时回落到相减推算，不被 0 短路', async () => {
+  // 只判 `!== undefined` 的话，`num(null)` 会得到 0 且链子停在这里，
+  // 未命中被算成 0 → 这一轮的输入金额偏低
+  const event = await usageOf(
+    sseResponse([
+      enc.encode(
+        sseChunk(
+          finalChunkWithUsage({
+            prompt_tokens: 1203,
+            prompt_tokens_details: {
+              prompt_cache_hit_tokens: 1024,
+              prompt_cache_miss_tokens: null,
+            },
+          }),
+        ),
+      ),
+    ]),
+  );
+  assert.ok(event);
+  assert.equal(event.usage.cachedTokens, 1024);
+  assert.equal(event.usage.cacheMissTokens, 179); // 1203 - 1024，不是 0
+});
+
+test('流式：命中字段是 null 时回落到下一个候选名', async () => {
+  const event = await usageOf(
+    sseResponse([
+      enc.encode(
+        sseChunk(
+          finalChunkWithUsage({
+            prompt_tokens: 1000,
+            prompt_tokens_details: { prompt_cache_hit_tokens: null, cached_tokens: 800 },
+          }),
+        ),
+      ),
+    ]),
+  );
+  assert.ok(event);
+  assert.equal(event.usage.cachedTokens, 800); // 不落回 0
+  assert.equal(event.usage.cacheMissTokens, 200);
+});
+
+test('流式：顶层（非嵌套）的缓存字段也能识别', async () => {
+  // 只认 `prompt_tokens_details.*` 的话，上游换个位置就会让命中恒为 0、
+  // 输入全部按最贵档计 —— 最多偏高 50 倍，而屏幕上只有一列变成 0
+  const event = await usageOf(
+    sseResponse([
+      enc.encode(
+        sseChunk(
+          finalChunkWithUsage({
+            prompt_tokens: 1000,
+            completion_tokens: 10,
+            total_tokens: 1010,
+            prompt_cache_hit_tokens: 800,
+            prompt_cache_miss_tokens: 200,
+          }),
+        ),
+      ),
+    ]),
+  );
+  assert.ok(event);
+  assert.equal(event.usage.cachedTokens, 800);
+  assert.equal(event.usage.cacheMissTokens, 200);
+});
+
+test('流式：total_tokens 是 null 时用输入 + 输出补齐', async () => {
+  const event = await usageOf(
+    sseResponse([
+      enc.encode(
+        sseChunk(finalChunkWithUsage({ prompt_tokens: 100, completion_tokens: 20, total_tokens: null })),
+      ),
+    ]),
+  );
+  assert.ok(event);
+  assert.equal(event.usage.totalTokens, 120);
+});

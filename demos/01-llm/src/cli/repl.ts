@@ -225,7 +225,10 @@ export async function runRepl(
           const entry: UsageEntry = {
             // 时刻在这里定格：金额按它分峰谷，事后再算就晚了（D-M4b-13）
             at: new Date().toISOString(),
-            model: session.model,
+            // 用**实际发出去**的那个模型名（chatOptions.model），而不是
+            // 事后再读一次 session.model —— 两者在当前串行循环下等价，
+            // 但账本记的应当是「这一轮用的模型」，而不是「现在设的模型」
+            model: chatOptions.model ?? session.model,
             usage,
             // 裁剪**之后**的估算 —— 它要和真实的 prompt_tokens 对得上，
             // 而后者描述的是「这一次实际发出去的东西」

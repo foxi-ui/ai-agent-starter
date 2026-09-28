@@ -76,6 +76,19 @@ function num(value: unknown): number {
 }
 
 /**
+ * 「可能是数字」的读取：可用就返回数字，否则 `undefined`。
+ *
+ * 与 `num` 的区别是**区分「没拿到」与「拿到了 0」**。回落链必须用它，
+ * 否则 `null` 或字符串会被 `num` 变成 0 并**短路**掉后面的候选字段：
+ * 上游若用 `null` 表示「本项不适用」（JSON API 的常见形态），链子就停在那里 ——
+ * 「未命中」被算成 0（金额偏低），或者「命中」被算成 0 而全部输入按最贵档计
+ * （金额偏高最多 50 倍）。两种情况屏幕上都没有任何异样。
+ */
+function optNum(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
  * 把 API 的 usage 对象归一化成 TokenUsage。
  *
  * **永不抛错**：任何字段缺失、类型不对、整个对象不存在，都退回 0 ——
@@ -104,15 +117,23 @@ function toTokenUsage(raw: unknown): TokenUsage {
       : {}
   ) as Record<string, unknown>;
 
+  // 命中数：**四个候选名依次回落**。前两个在嵌套的 details 里（当前官方形状），
+  // 后两个在顶层（历史文档 / 其它 OpenAI 兼容服务的形状）。只认嵌套那一种的话，
+  // 上游换个位置就会让命中恒为 0、输入全部按最贵档计 —— 最多偏高 50 倍，
+  // 而屏幕上唯一的变化是「命中缓存」那一列从某个数字变成 0，看不出是对是错。
   const cachedTokens =
-    promptDetails.prompt_cache_hit_tokens !== undefined
-      ? num(promptDetails.prompt_cache_hit_tokens)
-      : num(promptDetails.cached_tokens);
+    optNum(promptDetails.prompt_cache_hit_tokens) ??
+    optNum(promptDetails.cached_tokens) ??
+    optNum(source.prompt_cache_hit_tokens) ??
+    optNum(source.cached_tokens) ??
+    0;
 
   const cacheMissTokens =
-    promptDetails.prompt_cache_miss_tokens !== undefined
-      ? num(promptDetails.prompt_cache_miss_tokens)
-      : Math.max(0, promptTokens - cachedTokens);
+    optNum(promptDetails.prompt_cache_miss_tokens) ??
+    optNum(source.prompt_cache_miss_tokens) ??
+    // 都没给才相减推出。取 Math.max(0, …)：命中数大于输入总数时相减得负数，
+    // 而负金额比金额偏差难查得多
+    Math.max(0, promptTokens - cachedTokens);
 
   const completionDetails = (
     typeof source.completion_tokens_details === 'object' &&
@@ -124,10 +145,7 @@ function toTokenUsage(raw: unknown): TokenUsage {
   return {
     promptTokens,
     completionTokens,
-    totalTokens:
-      source.total_tokens !== undefined
-        ? num(source.total_tokens)
-        : promptTokens + completionTokens,
+    totalTokens: optNum(source.total_tokens) ?? promptTokens + completionTokens,
     cachedTokens,
     cacheMissTokens,
     reasoningTokens: num(completionDetails.reasoning_tokens),
@@ -207,7 +225,7 @@ export function createDeepSeekClient(
       const content = data.choices[0]?.message?.content ?? '';
       // 「没拿到」与「真的是 0」是两回事：API 没给 usage 时保持 undefined，
       // 由调用方决定怎么显示（见 core/types.ts 的 ChatResult）
-      const usage = data.usage === undefined ? undefined : toTokenUsage(data.usage);
+      const usage = data.usage == null ? undefined : toTokenUsage(data.usage);
       return { content, usage };
     },
 
@@ -254,6 +272,66 @@ export function createDeepSeekClient(
       let buffer = '';
       let doneEmitted = false;
 
+      /**
+       * 把一条 SSE 事件归一化成 0..n 个 `StreamEvent`。
+       *
+       * 抽成内部生成器，是为了让**主循环与收尾分支共用同一段归一化** ——
+       * 两处各写一份的话，收尾那份迟早漏掉某个变体（它已经漏过一次 usage）。
+       */
+      function* normalize(event: { data: string }): Generator<StreamEvent> {
+        // [DONE] 是 OpenAI 的约定，不是 SSE 协议的一部分，
+        // 所以由这一层（而不是 sse.ts）来解释它
+        if (event.data === '[DONE]') {
+          if (!doneEmitted) {
+            doneEmitted = true;
+            yield { type: 'done', reason: 'stop' };
+          }
+          return;
+        }
+
+        let payload: {
+          choices?: Array<{
+            delta?: { content?: string | null; reasoning_content?: string | null };
+            finish_reason?: string | null;
+          }>;
+          usage?: unknown;
+        };
+        try {
+          payload = JSON.parse(event.data);
+        } catch {
+          // 单条坏 chunk 不该让整个回答作废：跳过，继续读后面的
+          return;
+        }
+
+        const choice = payload.choices?.[0];
+        const delta = choice?.delta;
+
+        // 同一个 chunk 可能同时带内容和 finish_reason，所以逐个字段判定，
+        // 不是 switch 整个 chunk。顺序也要紧：正文 → **usage** → done。
+        //
+        // usage 必须在 done 之前：done 是终止信号，消费者见到它可能 break，
+        // 之后 yield 的就永远拿不到了。真实响应里两者在同一个末 chunk 上，
+        // 所以这个顺序不是理论问题（D-M4b-2）。
+        if (delta?.reasoning_content) {
+          yield { type: 'reasoning-delta', text: delta.reasoning_content };
+        }
+        if (delta?.content) {
+          yield { type: 'text-delta', text: delta.content };
+        }
+        // `!= null` 而不是 `!== undefined`：上游用 `usage: null` 表示
+        // 「本 chunk 没有用量」是常见形态，写成 `!== undefined` 会让 null
+        // 被归一化成**全 0**，于是这一轮以 ¥0.00000 记进账本 ——
+        // 一个看起来完整、实际少了钱的数字（D54 花力气避免的正是这个形状）
+        if (payload.usage != null) {
+          yield { type: 'usage', usage: toTokenUsage(payload.usage) };
+        }
+        if (choice?.finish_reason && !doneEmitted) {
+          doneEmitted = true;
+          // 宽松处理：服务端新增取值时原样传出，不做白名单校验
+          yield { type: 'done', reason: choice.finish_reason as FinishReason };
+        }
+      }
+
       try {
         while (true) {
           const result = await readWithIdleTimeout(reader, idleTimeoutMs);
@@ -266,69 +344,23 @@ export function createDeepSeekClient(
           const { events, rest } = parseSse(text, buffer);
           buffer = rest;
 
-          for (const event of events) {
-            // [DONE] 是 OpenAI 的约定，不是 SSE 协议的一部分，
-            // 所以由这一层（而不是 sse.ts）来解释它
-            if (event.data === '[DONE]') {
-              if (!doneEmitted) {
-                doneEmitted = true;
-                yield { type: 'done', reason: 'stop' };
-              }
-              continue;
-            }
-
-            let payload: {
-              choices?: Array<{
-                delta?: { content?: string | null; reasoning_content?: string | null };
-                finish_reason?: string | null;
-              }>;
-              usage?: unknown;
-            };
-            try {
-              payload = JSON.parse(event.data);
-            } catch {
-              // 单条坏 chunk 不该让整个回答作废：跳过，继续读后面的
-              continue;
-            }
-
-            const choice = payload.choices?.[0];
-            const delta = choice?.delta;
-
-            // 同一个 chunk 可能同时带内容和 finish_reason，所以逐个字段判定，
-            // 不是 switch 整个 chunk。顺序也要紧：正文 → **usage** → done。
-            //
-            // usage 必须在 done 之前：done 是终止信号，消费者见到它可能 break，
-            // 之后 yield 的就永远拿不到了。真实响应里两者在同一个末 chunk 上，
-            // 所以这个顺序不是理论问题（D-M4b-2）。
-            if (delta?.reasoning_content) {
-              yield { type: 'reasoning-delta', text: delta.reasoning_content };
-            }
-            if (delta?.content) {
-              yield { type: 'text-delta', text: delta.content };
-            }
-            if (payload.usage !== undefined) {
-              yield { type: 'usage', usage: toTokenUsage(payload.usage) };
-            }
-            if (choice?.finish_reason && !doneEmitted) {
-              doneEmitted = true;
-              // 宽松处理：服务端新增取值时原样传出，不做白名单校验
-              yield { type: 'done', reason: choice.finish_reason as FinishReason };
-            }
-          }
+          for (const event of events) yield* normalize(event);
         }
 
-        // 冲掉 decoder 内部可能残留的字节（正常不会剩）
+        // 冲掉 decoder 内部可能残留的字节。**这一步不是可有可无的**：
+        // 最后一块若正好把一个多字节字符切成两半，`decode(chunk, {stream:true})`
+        // 会把那半个字符扣在内部，于是它所在的那条事件在循环里永远等不到补齐、
+        // 留在 buffer 里 —— 只有这里的 decode() 能把它冲出来。
         const tail = decoder.decode();
         if (tail !== '') {
           const { events } = parseSse(tail, buffer);
-          for (const event of events) {
-            // 收尾阶段只剩极少数情况会有事件，且都不带正文；
-            // 这里只处理 done，避免重复实现上面的归一化逻辑
-            if (event.data === '[DONE]' && !doneEmitted) {
-              doneEmitted = true;
-              yield { type: 'done', reason: 'stop' };
-            }
-          }
+          // 这里**同样要跑完整的归一化**，不能只认 `[DONE]`。
+          // 曾经的写法是「收尾阶段的事件都不带正文，只处理 done 就够了」——
+          // 那句对正文成立，对 **usage** 不成立：一条被切碎的末 chunk 里
+          // usage 会被静默丢掉，紧接着下面补一个 done。结果这一轮屏幕正常、
+          // assistant 消息也正常落盘，**只有账本少一轮**（偏低且无任何迹象），
+          // 而 D-M4b-2 承诺的是「收到 done ⇒ 统计已经到手」。
+          for (const event of events) yield* normalize(event);
         }
 
         // 服务端没给 finish_reason 也没给 [DONE] 就关流了：

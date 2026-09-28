@@ -98,6 +98,35 @@ function recordingStore(): {
   };
 }
 
+/**
+ * **只对 usage 记录**抛错的假 store。
+ *
+ * 用它而不是「每次 append 都抛错」的那个：后者在第 1 轮 message 落盘时就
+ * 把「只警告一次」的闩合上了，于是**删掉 usage 那段 try/catch 也照样通过** ——
+ * 异常会被外层聊天路径的 catch 变成一行 `[error]`，而断言只看 `[警告]` 的条数。
+ * 那样「usage 落盘失败共用同一条降级路径」这条声明就没有任何测试保护。
+ */
+function storeFailingOnlyUsage(message: string): { store: SessionStore; attempts: () => number } {
+  let attempts = 0;
+  return {
+    attempts: () => attempts,
+    store: {
+      create() {},
+      append(_id, change) {
+        if (change.type !== 'usage') return;
+        attempts += 1;
+        throw new Error(message);
+      },
+      load() {
+        return null;
+      },
+      list() {
+        return [];
+      },
+    },
+  };
+}
+
 /** 每次 append 都抛错的假 store，用来走「落盘失败降级」那条路径 */
 function failingStore(message: string): { store: SessionStore; attempts: () => number } {
   let attempts = 0;
@@ -668,7 +697,7 @@ test('只读命令一条记录都不写', async () => {
   const { stream, errStream } = captureOutput();
 
   await runRepl(fakeClient([]), {
-    input: inputFrom(['/history', '/model', '/sessions']),
+    input: inputFrom(['/history', '/model', '/sessions', '/usage']),
     output: stream,
     errorOutput: errStream,
     prompt: 'You: ',
@@ -1101,18 +1130,22 @@ test('响应没有 usage 时不记账（既有 fakeClient 就是这种情况）'
   assert.equal(usageWrites(writes).length, 0);
 });
 
-test('usage 落盘失败时对话继续，且只警告一次', async () => {
-  const { store, attempts } = failingStore('磁盘满了');
+test('usage 落盘失败时走的是共用降级路径：警告一次、不是每轮一个 error', async () => {
+  // 只让 usage 那条 append 抛错 —— message 照常落盘，所以「只警告一次」的闩
+  // 由 usage 这条失败来合上。删掉 usage 那段 try/catch 的话，异常会被外层
+  // 聊天路径的 catch 接住、变成 `[error] 磁盘满了`，下面两条断言都会红
+  const { store, attempts } = storeFailingOnlyUsage('磁盘满了');
 
   const { out, err } = await runWith(fakeClientWithUsage(['你好', '再见'], USAGE), {
     lines: ['hi', 'bye'],
     store,
   });
 
-  assert.ok(attempts() > 0);
-  // 与 message 落盘失败**共用**同一条降级路径（reportWriteFailure），
-  // 所以警告仍然恰好一行，而不是每轮刷一句
+  assert.equal(attempts(), 2, '两轮都应尝试记账');
+  // 与 message 落盘失败**共用**同一条降级路径（reportWriteFailure）：
+  // 恰好一行 [警告]，而**不是**聊天路径的 [error]
   assert.equal(err.match(/\[警告\]/g)?.length, 1, `stderr：${err}`);
+  assert.doesNotMatch(err, /\[error\]/, `不该走聊天路径的报错分支：${err}`);
   // 对话继续：两轮回答都出来了
   assert.match(out, /你好/);
   assert.match(out, /再见/);

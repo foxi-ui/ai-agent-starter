@@ -107,7 +107,7 @@ AI: ...
 | `pnpm start --show-reasoning` | 展开思考全文到 **stderr**（默认只给一行 `[思考中…]`） |
 | `pnpm start --no-thinking` | 关闭 thinking，对比延迟与输出 |
 | `pnpm start --max-context <n>` | 上下文软预算（token），默认 `64000` |
-| `pnpm test` | 运行全部测试（`node --test`，当前 291 个用例） |
+| `pnpm test` | 运行全部测试（`node --test`，当前 302 个用例） |
 | `pnpm run typecheck` | 类型检查（`tsc --noEmit`） |
 
 三个开关顺序无关，可与 `--resume` 任意组合（`pnpm start --resume <id> --no-thinking`）。

@@ -264,10 +264,22 @@ export function renderCommandResult(
         return;
       }
 
-      // 逐行算好，再统一算列宽 —— 表头也要参与，否则中文表头会窄一截
-      const rows = result.entries.map((entry, index) => {
+      // 逐行算好，再统一算列宽 —— 表头与合计行都要参与，否则中文表头、
+      // 以及比数据列更宽的「合计」两个字，都会把那一行挤得对不齐
+      const rows: string[][] = [];
+      // 分档轮次顺便在这里数出来：「时段拆分」那行要报每档几轮，
+      // 而 `cost()` 只给金额合计，没有分档计数
+      let peakRounds = 0;
+      let offPeakRounds = 0;
+
+      result.entries.forEach((entry, index) => {
         const period = periodAt(new Date(entry.at));
-        return [
+        const amount = costOf(entry.usage, entry.model, period);
+        if (amount !== null) {
+          if (period === 'peak') peakRounds += 1;
+          else offPeakRounds += 1;
+        }
+        rows.push([
           String(index + 1),
           entry.model,
           period === 'peak' ? '高峰' : '空闲',
@@ -275,8 +287,8 @@ export function renderCommandResult(
           group(entry.usage.cachedTokens),
           group(entry.usage.completionTokens),
           group(entry.usage.reasoningTokens),
-          formatAmount(costOf(entry.usage, entry.model, period)),
-        ];
+          formatAmount(amount),
+        ]);
       });
 
       const headers = ['#', '模型', '时段', '输入', '命中缓存', '输出', '思考', '费用'];
@@ -296,7 +308,11 @@ export function renderCommandResult(
       ];
 
       const widths = headers.map((header, i) =>
-        Math.max(displayWidth(header), ...rows.map((r) => displayWidth(r[i]))),
+        Math.max(
+          displayWidth(header),
+          displayWidth(totalRow[i]),
+          ...rows.map((r) => displayWidth(r[i])),
+        ),
       );
       // **不做 trimEnd**：末列补齐的空格一旦削掉，各行的显示宽度就会不等 ——
       // 表头末列是「费用」（宽度 4），数据行末列是「¥0.00405」（宽度 8），
@@ -332,18 +348,21 @@ export function renderCommandResult(
         );
       }
 
-      // 峰谷拆分：只在两档都出现过时才有信息量
+      // 峰谷拆分：只在两档都出现过时才有信息量。轮次数按 spec §9 一并报出 ——
+      // 只有金额的话，用户无法判断「空闲那部分便宜」是因为单价低还是因为轮次少
       if (result.cost.pricedRounds >= 2 && result.cost.peakCny > 0 && result.cost.offPeakCny > 0) {
         write(
-          `时段拆分：高峰部分 ${formatAmount(result.cost.peakCny)} / 空闲部分 ${formatAmount(result.cost.offPeakCny)}`,
+          `时段拆分：高峰 ${peakRounds} 轮 ${formatAmount(result.cost.peakCny)} / 空闲 ${offPeakRounds} 轮 ${formatAmount(result.cost.offPeakCny)}`,
         );
       }
 
       // 表过期是**必须可见**的：静默用一张过期表会让 2027 年春节
       // 被当成普通工作日按高峰计价（D-M4b-14）
       if (result.entries.some((e) => isOutsideHolidayTable(new Date(e.at)))) {
+        // 措辞不写「${YEAR + 1} 年及以后」—— 触发条件是「年份 ≠ 表年份」，
+        // 早于表年份的记录（手改的旧时间戳）也会走到这里，那句话对它是错的
         write(
-          `注意：节假日表只覆盖 ${HOLIDAY_TABLE_YEAR} 年，${HOLIDAY_TABLE_YEAR + 1} 年及以后的记录未按法定节假日扣除。`,
+          `注意：节假日表只覆盖 ${HOLIDAY_TABLE_YEAR} 年，其它年份的记录未按法定节假日扣除。`,
         );
       }
 
@@ -351,7 +370,8 @@ export function renderCommandResult(
       // 估算器的误差、中断的轮次、节假日表的覆盖范围三件事，
       // 不写出来用户就会把 ¥0.01328 当成账单
       write(
-        `口径：按 docs/deepseek-api-facts.md 的价目表分高峰/空闲两档估算（含 ${HOLIDAY_TABLE_YEAR} 年法定节假日表），未经账单核对。`,
+        `口径：按 docs/deepseek-api-facts.md 的价目表分高峰/空闲两档估算（含 ${HOLIDAY_TABLE_YEAR} 年法定节假日表）；`
+          + '未计入中断的轮次，未经账单核对。',
       );
       write('范围：本会话的全部记录，含 --resume 恢复的历史。');
       return;

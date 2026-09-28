@@ -96,6 +96,13 @@ function beijingParts(at: Date): BeijingParts | null {
   // 平移之后一律用 getUTC* / toISOString 读 —— 得到的就是北京时间分量，
   // 且不受运行机器时区影响
   const bj = new Date(t + BEIJING_OFFSET_MS);
+  // ⚠️ **第二个 NaN 出口，别删**：入参合法不代表平移后合法。`t` 若落在
+  // Date 的上界附近（`+275760-09-13T00:00:00.000Z` 是最大值），加上 8 小时会
+  // 溢出成 Invalid Date，紧接着 `bj.toISOString()` 抛
+  // `RangeError: Invalid time value`。只判入参的话，这个错会从一个统计函数里
+  // 炸穿 `/usage` 命令、进而崩掉整个 REPL —— 而触发它只需要一行被人手改坏的日志。
+  if (Number.isNaN(bj.getTime())) return null;
+
   return {
     key: bj.toISOString().slice(0, 10),
     day: bj.getUTCDay(),

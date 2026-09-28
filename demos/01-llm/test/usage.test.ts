@@ -8,6 +8,18 @@
 // 否则读的人要自己心算，而算错一次就会把断言写反。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+// ⚠️ **把本测试进程锚到 UTC，别删**。
+//
+// `core/usage.ts` 内部先平移到北京时间再取分量，注释里声称「不受运行机器时区影响」。
+// 但开发机通常就在 Asia/Shanghai，本地时间**恰好等于**北京时间 —— 那种情况下
+// 把实现里的 `getUTC*` 换成 `getHours()/getDay()`，下面所有断言照样全绿，
+// 于是这条契约实际上没有任何测试保护。
+//
+// 锚成 UTC 之后，本地时间与北京时间差 8 小时，任何一处误用本地时间方法
+// 都会立刻把断言打红。下面那条守卫用例负责证明锚定真的生效了
+// （与 test/journal.test.ts 锚 Asia/Shanghai 是同一个套路）。
+process.env.TZ = 'UTC';
 import {
   periodAt,
   isOutsideHolidayTable,
@@ -21,6 +33,13 @@ import {
   type UsageEntry,
 } from '@/core/usage.ts';
 import type { TokenUsage } from '@/core/types.ts';
+
+test('测试进程的时区确实是 UTC —— 否则下面那些断言证明不了什么', () => {
+  // 没有这条守卫，`process.env.TZ = 'UTC'` 哪天被删掉或失效了，
+  // 整套「不受机器时区影响」的断言会**悄悄退化成同义反复**
+  assert.equal(new Date('2026-09-28T01:00:00Z').getHours(), 1);
+  assert.notEqual(new Date('2026-09-28T01:00:00Z').getHours(), 9); // 北京时间才 9 点
+});
 
 // ── periodAt：工作日的高峰窗口 ─────────────────────────────────────────
 //
@@ -105,6 +124,17 @@ test('无效时刻按高峰计，且不抛错', () => {
 
 test('无效时刻不触发「超出表范围」的提示', () => {
   assert.equal(isOutsideHolidayTable(new Date('不是日期')), false);
+});
+
+test('平移到北京时间后溢出的时刻，按高峰计且不抛错', () => {
+  // 入参是**合法** Date，但它是 Date 的上界，+8h 会溢出成 Invalid Date ——
+  // 只判入参 NaN 的话，`bj.toISOString()` 会抛 RangeError 从这里炸穿 /usage。
+  // 触发它只需要一行被人手改坏的日志（`at` 字段校验只要求是 string）。
+  const maxDate = new Date('+275760-09-13T00:00:00.000Z');
+  assert.equal(Number.isNaN(maxDate.getTime()), false, '前提：入参本身是合法的');
+
+  assert.equal(periodAt(maxDate), 'peak');
+  assert.equal(isOutsideHolidayTable(maxDate), false);
 });
 
 // ── 数据自证 ──────────────────────────────────────────────────────────
@@ -228,12 +258,15 @@ test('costOf：空闲档恰好是高峰档的一半', () => {
 });
 
 test('costOf：命中缓存让输入便宜 50 倍', () => {
-  // 同样 100 万输入 token，全命中 vs 全未命中
+  // 同样 100 万输入 token，全命中 vs 全未命中。
+  // 断言**比值**而不是两个绝对值 —— 后者与「三档单价各自独立计入」完全重复，
+  // 真正要钉的是这个倍数本身（D-M4b-6 选择「分开存」的理由就是它）
   const hit = costOf(usage({ cachedTokens: 1_000_000 }), 'deepseek-flash', 'peak') as number;
   const miss = costOf(usage({ cacheMissTokens: 1_000_000 }), 'deepseek-flash', 'peak') as number;
-  // 0.04 vs 2 —— 正是 D-M4b-6 选择「分开存」的那个 50 倍
-  assertMoney(hit, 0.04);
-  assertMoney(miss, 2);
+  assert.ok(
+    Math.abs(miss / hit - 50) < 1e-9,
+    `未命中/命中 应为 50 倍，实际 ${miss / hit}`,
+  );
 });
 
 test('costOf：思考 token 已含在 completion 里，不重复计', () => {
