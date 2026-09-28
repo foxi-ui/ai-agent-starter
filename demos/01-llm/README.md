@@ -7,12 +7,13 @@ CLI 模式下的 AI 对话工具，**不使用 LangChain，直接调用 DeepSeek
 对应学习路线的第一站，目标是亲手走通这条链路的起点：
 
 ```text
-LLM API → 消息结构 → 上下文管理 → Streaming → 错误处理 → Token 统计
+LLM API → 消息结构 → 上下文管理 → Streaming → 错误处理 → Token 统计与成本账本
 ```
 
 > **当前范围**：多轮对话（非流式 + **流式 SSE**）+ 最小错误处理 + **会话持久化**
-> （JSONL 落盘、`--resume`、`/sessions`）+ **上下文预算裁剪与三个启动开关**（M4a）。
-> 蓝图中尚未落地的项（token 统计与成本账本、`/usage`、structured output 等）见
+> （JSONL 落盘、`--resume`、`/sessions`）+ **上下文预算裁剪与三个启动开关**（M4a）
+> + **token 统计与成本账本**（`/usage`、峰谷分档计价，M4b）。
+> 蓝图中尚未落地的项（structured output、错误分类与重试等）见
 > [`EVALUATION.md`](EVALUATION.md)。
 
 ## 环境要求
@@ -106,7 +107,7 @@ AI: ...
 | `pnpm start --show-reasoning` | 展开思考全文到 **stderr**（默认只给一行 `[思考中…]`） |
 | `pnpm start --no-thinking` | 关闭 thinking，对比延迟与输出 |
 | `pnpm start --max-context <n>` | 上下文软预算（token），默认 `64000` |
-| `pnpm test` | 运行全部测试（`node --test`，当前 206 个用例） |
+| `pnpm test` | 运行全部测试（`node --test`，当前 291 个用例） |
 | `pnpm run typecheck` | 类型检查（`tsc --noEmit`） |
 
 三个开关顺序无关，可与 `--resume` 任意组合（`pnpm start --resume <id> --no-thinking`）。
@@ -176,6 +177,7 @@ pnpm start --resume 20260924-224330-a3f1
 | `/model` | 显示当前模型 |
 | `/model <name>` | 切换模型，立即对后续请求生效 |
 | `/sessions` | 列出历史会话，当前会话带 `*` 标记 |
+| `/usage` | 显示本会话的 token 用量、按高峰/空闲分档的费用估算与估算偏差 |
 
 命令**不进入对话上下文**，也不会被发给模型。`/model` 不校验模型名 ——
 写错的名字会在下一次请求时由 API 报错（走 stderr）。
@@ -206,6 +208,7 @@ pnpm start --resume 20260924-224330-a3f1
     core/session.ts     # 会话：消息数组、append、toMessages、变更广播（onChange）
     core/context.ts     # 上下文预算：estimateTokens 估算、fitToBudget 按轮裁剪（纯函数）
     core/commands.ts    # 命令解析（parseCommand）与执行（executeCommand → CommandResult）
+    core/usage.ts       # 用量与成本：时段判断（含 2026 法定节假日表）、单价、账本（纯逻辑）
     llm/client.ts       # LLMClient 接口（测试替身的接缝）
     llm/deepseek.ts     # DeepSeek adapter：非流式 + 流式调用、响应解析
     llm/sse.ts          # SSE 分帧（纯函数）
@@ -222,6 +225,8 @@ pnpm start --resume 20260924-224330-a3f1
     journal.test.ts     # 日志格式、解析、回放、id 生成与校验（纯函数）
     store.test.ts       # 会话存储的文件实现（真临时目录，不 mock fs）
     args.test.ts        # --resume 与三个开关的参数解析（纯函数）
+    usage.test.ts       # 时段判断、单价、账本（纯函数，喂值断言值）
+    pricing.test.ts     # 代码里的价目表 ↔ docs/deepseek-api-facts.md 的一致性
 ```
 
 ## 当前能力边界
@@ -229,7 +234,7 @@ pnpm start --resume 20260924-224330-a3f1
 **已实现**
 
 - 非流式多轮对话 + **流式（SSE）逐字输出**，上下文在进程内存中累积
-- REPL 命令：`/clear` `/history` `/model` `/sessions`
+- REPL 命令：`/clear` `/history` `/model` `/sessions` `/usage`
 - **上下文预算裁剪**（`core/context.ts`）：按整轮从最老的丢起，`system` 与当前问题
   永不裁；阈值由 `--max-context` 控制。**裁剪只影响本次请求**，会话与磁盘始终完整。
   自动化测试见 `test/context.test.ts`，接线（发出的被裁 / 落盘的完整）见 `test/repl.test.ts`
@@ -242,11 +247,14 @@ pnpm start --resume 20260924-224330-a3f1
 - 会话持久化：JSONL 事件流落在 `.sessions/`，`--resume <id>` 恢复，`/sessions` 列出。
   自动化测试见 `test/journal.test.ts`（格式与回放）、`test/store.test.ts`（真临时目录上的
   读写与路径安全）、`test/args.test.ts`（参数解析），以及 `test/index.test.ts` 的子进程用例
+- **token 统计与成本账本**：每轮成功请求的 `usage` 记进 `.sessions/*.jsonl`
+  （`{ type: 'usage' }` 记录），`--resume` 后接着累计。`/usage` 按
+  **高峰/空闲**两档估算金额（人民币元，价目见 `docs/deepseek-api-facts.md`），
+  并显示 M4a 的上下文估算与真实用量的偏差。**这不是账单** —— 中断的轮次
+  不计入，且节假日表只覆盖 2026 年
 
 **尚未实现（后续增量）**
 
-- 命令：`/usage`（Token 统计尚未实现，属 M4b）
-- token 统计 / 成本账本（属 M4b）
 - structured output（`response_format`，属 M5）
 - 错误分类与自动重试、`--timeout`、中断回滚、`-p` 一次性模式（属 M6）
 

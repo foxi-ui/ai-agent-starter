@@ -9,7 +9,7 @@
 ```text
 TypeCheck: PASS  (tsc --noEmit 退出码 0)
 Lint:      N/A   (本仓库未配置 linter)
-Test:      PASS  (node --test 206/206，退出码 0)
+Test:      PASS  (node --test 291/291，退出码 0)
 Build:     N/A   (noEmit，Node 直接运行 .ts，无构建产物)
 ```
 
@@ -20,9 +20,9 @@ Build:     N/A   (noEmit，Node 直接运行 .ts，无构建产物)
 - [ ] **处理 API 错误** —— 部分达标：M1 最小实现，M6 补全
 - [x] **实现 Streaming** —— M2
 - [ ] **使用 Structured Output** —— 未做，落点 M5。**它原本没有任何落点**，见第 5 项
-- [ ] **统计 Token / Cost** —— 未做，落点 M4
+- [x] **统计 Token / Cost** —— M4b
 
-**整体：3 项达标 / 1 项部分 / 2 项未做。**
+**整体：4 项达标 / 1 项部分 / 1 项未做。**
 
 M1 自身的交付目标 —— **非流式多轮对话 + 最小错误处理** —— 已全部达成并验证。
 上表的未做项属于后续增量，不是 M1 的欠账。
@@ -118,11 +118,33 @@ M1 自身的交付目标 —— **非流式多轮对话 + 最小错误处理** �
 > - **`finish_reason: 'length'` 导致 JSON 截断**时的处理 —— 拿到半个对象应该报错还是
 >   尽力解析，需要明确决定
 
-### 6. 统计 Token / Cost（未做，落点 M4）
+### 6. 统计 Token / Cost（**达标**，M4b）
 
-- **现状**：不读 `usage` 字段，不累计、不落盘、无 `/usage` 命令
-- **顺序依赖**：`usage` 在流式下只出现在末 chunk，所以这一项与第 4 项耦合 ——
-  先做 Streaming 更顺（已完成）
+- **实现**：`usage` 从末 chunk 解析成 `StreamEvent` 的第 4 个变体（先于 `done`），
+  成功轮次连同**记账时刻**与**裁剪后的上下文估算**记进 `core/usage.ts` 的账本，
+  并向 `.sessions/*.jsonl` 追加一行 `{ type: 'usage' }`；`/usage` 按
+  **高峰/空闲**两档（含 2026 法定节假日表与调休表）估算人民币金额
+- **证据（自动化）**：`test/usage.test.ts`（时段判断 15 条 + 计价与账本 22 条）、
+  `test/deepseek.test.ts`（usage 解析 11 条，含「先于 done」的顺序断言）、
+  `test/journal.test.ts`（usage 记录的格式契约与回放）、
+  `test/render.test.ts`（`/usage` 表格与口径行）、
+  `test/repl.test.ts`（成功才记账、落盘失败共用降级）、
+  `test/index.test.ts`（`--resume` 后账本接得上）
+- **证据（2026-09-28 实测，真实网络）**：
+  - **设计前提成立**：请求体**不传** `stream_options` 也能在末 chunk 拿到非零
+    `usage`（单轮：输入 44 / 输出 139）
+  - `--resume` 一个含 3 行 usage 的会话，`/usage` 报 3 轮、合计与原落盘一致；
+    续一轮后变 4 轮（`¥0.00319` → `¥0.00427`）
+  - `--no-thinking` 下 `reasoningTokens` 为 0
+  - **偏差实测**：`--no-thinking` 单轮「估算 19 / 真实 19（+0.0%，与真实一致）」；
+    thinking 模式下同一输入是「估算 19 / 真实 44（**-56.8%，估算偏激进**）」
+    —— 估算器只数可见文本，**thinking 模式会在提示词里加一段固定开销**
+    （实测约 25 token），短上下文下这段开销主导，于是估算反而偏小。
+    这正是本项要**暴露**而不是**掩盖**的东西：`/usage` 只显示偏差，不回写估算公式（D61）
+  - `命中缓存` 在本项目的提示词长度下恒为 0：系统提示只有约 19 token，
+    远低于服务端的缓存粒度，前缀根本没被缓存。**这不是统计出错**
+- **已知边界**：中断的轮次不计入（拿不到 usage，宁缺毋滥）；节假日表只覆盖 2026 年，
+  超出范围会打印提示；金额是估算，未经账单核对
 - 所需的模型与价目事实见 [`docs/deepseek-api-facts.md`](docs/deepseek-api-facts.md)
 
 ## 测试 ↔ 行为映射
@@ -150,6 +172,10 @@ M1 自身的交付目标 —— **非流式多轮对话 + 最小错误处理** �
 | 三个开关的参数解析：互斥、`--max-context` 的八种非法输入、顺序无关、布尔幂等、`--resume` 重复给报错 | `test/args.test.ts`（纯函数） |
 | 思考的两种渲染模式与流向（stdout 绝不含思考文字）；请求体的 `thinking` 只在关闭时出现 | `test/render.test.ts`、`test/deepseek.test.ts` |
 | 裁剪接线：发给 client 的被裁、落盘的是完整历史、警告恰一行；三个开关透传 | `test/repl.test.ts`（记录型假 client / 假 store） |
+| 时段判断：工作日两个高峰窗口的左右边界、午休与深夜、周末、法定节假日、调休上班日、超出 2026 的范围、无效时刻不抛错；两张表的数据自证（33 天 / 6 天 / 全在周末 / 不重叠） | `test/usage.test.ts`（纯函数，喂 UTC 时刻断言档位） |
+| 计价与账本：三档单价独立计入、空闲恰为高峰一半、命中便宜 50 倍、思考不重复计、未知模型返回 `null`、未定价模型不与合计混、按每条记录**当时**的时段计价、`at` 是坏字符串时不抛错、`list()` 深拷贝 | `test/usage.test.ts`（纯函数） |
+| usage 解析：末 chunk 的 usage 产出事件且**先于 done**、与 done 同 chunk 的顺序、无 usage 时不产事件、字段缺失/类型不对全填 0、命中数大于输入时未命中不为负、`total_tokens` 缺失时补齐、请求体不带 `stream_options`；非流式 `chat()` 的 `usage` 与「没拿到用 `undefined`」 | `test/deepseek.test.ts`（mock `globalThis.fetch`） |
+| `/usage` 渲染：空账本的提示、表头与数据行显示宽度一致（中文占 2 列）、金额 5 位小数、未定价显示 `—`、口径行、节假日表过期提示 | `test/render.test.ts`（注入 stdout） |
 
 ```bash
 pnpm test
@@ -166,7 +192,9 @@ pnpm test
 
 `DECISIONS.md` D1（手写 fetch 而非 SDK）、D5（不做自动重试）、D7（失败轮次不写 assistant）、
 D13（错误走 stderr）、D21（流空闲超时）、D26（命令结果走 stdout）、
-D39（估算除数取 1.5）、D43（裁剪不回写会话）、D44（思考走 stderr）、D49（`thinking` 是 boolean）
+D39（估算除数取 1.5）、D43（裁剪不回写会话）、D44（思考走 stderr）、D49（`thinking` 是 boolean）、
+D50–D65（M4b 的 16 条：usage 事件与顺序、账本落盘与峰谷计价、未知模型不猜单价、
+`/usage` 的口径行、价目表一致性测试、`/clear` 不清账本、不经 Session 广播等）
 
 ## 维护方式
 

@@ -35,6 +35,9 @@ llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件�
 **context（M4a）** 是同一法则的又一次应用：上下文预算的裁剪策略是**新增的
 `core/context.ts`** 里的纯函数，由 `cli/repl.ts` 在组装之后调一次 ——
 它**不进 `Session`**，因为预算是策略而不是状态。
+**usage（M4b）** 沿同一条思路：时段判断与计价是**新增的 `core/usage.ts`** 里的
+纯函数 + 一个只碰内存的 `UsageLedger`，落盘由 `cli/repl.ts` 直接调 `store.append` ——
+账本**不进 `Session`**，也就**不走 `onChange` 广播**（见下文的落盘路径）。
 
 ## 模块职责
 
@@ -50,8 +53,9 @@ llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件�
 | `src/core/session.ts` | core | 消息数组累积；`toMessages(systemPrompt)` 组装请求消息；变更广播（`onChange`） | 网络、打印、落盘、**预算** |
 | `src/core/context.ts` | core | 上下文预算：`estimateTokens` 保守估算、`fitToBudget` 按轮裁剪（纯函数）；结果**只用于本次请求** | 会话状态、IO、打印 |
 | `src/core/commands.ts` | core | 命令解析（`parseCommand`）与执行（`executeCommand` → `CommandResult`）；只改 `Session`、不打印；外部数据经 `CommandDeps` 注入 | 打印、网络、文件系统 |
+| `src/core/usage.ts` | core | 用量与成本：`periodAt` 时段判断（北京时间 + 2026 法定节假日表）、`costOf` 峰谷分档计价、`UsageLedger`（纯逻辑，不落盘、不打印） | IO、打印、真实账单核对 |
 | `src/llm/client.ts` | llm | `LLMClient` 接口 + `LLMClientConfig`（测试接缝） | 具体实现 |
-| `src/llm/deepseek.ts` | llm | `fetch` 调用 `/chat/completions`（非流式 + 流式）、解析 `content`、把 SSE chunk 归一化成 `StreamEvent`、非 2xx 抛错 | 打印、重试 |
+| `src/llm/deepseek.ts` | llm | `fetch` 调用 `/chat/completions`（非流式 + 流式）、解析 `content` 与 `usage`、把 SSE chunk 归一化成 `StreamEvent`、非 2xx 抛错 | 打印、重试 |
 | `src/llm/sse.ts` | llm | SSE 分帧（纯函数，只懂协议不懂 DeepSeek） | 网络、解码、事件语义 |
 | `src/cli/render.ts` | cli | `StreamEvent` 与 `CommandResult` → stdout/stderr 的呈现：`createStreamRenderer` / `renderCommandResult` / `renderUnknownCommand` | 累积正文、解析命令、网络 |
 | `loader.mjs` | 构建 | 向 Node 注册 `@/` 别名钩子 | 业务逻辑 |
@@ -149,6 +153,10 @@ loader-hooks.mjs   在钩子线程中把 @/x 解析为 src/x 的文件 URL
 - **会话 id 是路径的一部分**，因此受白名单校验 + 路径包含检查两道路径防线约束（D32）。
 - **裁剪不回写会话**：`fitToBudget` 的结果只用于本次请求，`Session` 与 JSONL 始终是
   完整历史（D-M4a-5）。
+- **金额不是账单**：`/usage` 的数字是**估算** —— 价目表是代码里的常量（与事实文档的
+  一致性由 `test/pricing.test.ts` 钉住），时段按**每条记录自己的 `at`** 判断，
+  节假日表只覆盖 2026 年，且**中断的轮次不计入**。所以输出里那两行
+  「口径」「范围」是硬要求，不是客套话（D57）。
 - **开关不落盘**：`--show-reasoning` / `--no-thinking` / `--max-context` 是「本次启动的
   偏好」而不是会话状态，因此不进 `Session`、不动 JSONL 格式契约（D-M4a-7）。
 
@@ -295,8 +303,10 @@ body:    { model, messages, stream: true }
 ```
 
 **流式**：body 只发这三个字段，**不发 `stream_options`** —— 官方文档没有要求流式
-必须带它（依赖方向是反的：单独传 `stream_options` 才返回 400），而 M2 也不消费
-`usage`，发了没有收益（见 `docs/deepseek-api-facts.md` 的「接口」）。
+必须带它（依赖方向是反的：单独传 `stream_options` 才返回 400），且官方口径是不传它时
+`usage` 也出现在最后一个 chunk 上。M4b 起确实消费 `usage` 了，但前提未变，
+所以请求体仍然不变（2026-09-28 实测确认：不传它也能拿到非零 usage，
+见 `docs/deepseek-api-facts.md` 的「接口」）。
 
 响应是一个 SSE **字节流**，要经过三步才变成 `StreamEvent`：
 
@@ -314,9 +324,24 @@ response.body.getReader()  逐块 read 出 Uint8Array
 
 ```ts
 const content = data.choices[0]?.message?.content ?? '';
+const usage = data.usage === undefined ? undefined : toTokenUsage(data.usage);
 ```
 
+`usage` 的归一化（`toTokenUsage`）是**防御式**的：任何字段缺失、类型不对、
+整个对象不存在，都退回 0，**永不抛错** —— 统计拿不到不该毁掉一轮对话。
+「API 没给 usage」用 `undefined` 表达，而不是全 0：「没拿到」与「真的是 0」是两回事。
+
 逐层可选链，缺字段时回落为空串——**任何一层缺失都不会抛错**。
+
+### 步骤 5b：usage 事件（M4b）
+
+`StreamEvent` 有四种变体，`usage` 是第四个。**顺序契约：`usage` 永远先于 `done`**
+（D-M4b-2）—— `done` 是终止信号，消费者见到它可能 break 出循环，之后 yield 的
+就永远拿不到了。真实响应里两者常常在**同一个**末 chunk 上，所以这不是理论问题。
+
+渲染器对它是**显式忽略**（`cli/render.ts` 里那个独立的 `if`）：那条 `if` 链的最后
+一个分支原本是隐式的 `done`，加了第四个变体之后「走到这里的一定是 done」不再成立，
+不拦它就会每轮多写一个 `AI: ` 前缀（D-M4b-11）。用量由 `/usage` 按需展示。
 
 ### 步骤 7：渲染事件并追加 assistant
 
@@ -361,7 +386,19 @@ cli/repl.ts 的 onChange 实现：store.append(options.sessionId, change)
 cli/store.ts：serializeRecord(change) + '\n' → appendFileSync(<id>.jsonl)
 ```
 
-三个设计点：
+**`usage` 记录是这条路唯一的例外**（M4b）：它由 `cli/repl.ts` 在成功轮次
+**直接**调 `store.append(id, { type: 'usage', entry })`，不经过 `Session`、
+也不走 `onChange`。之所以破例：`onChange` 解决的是「**看不见的写入点**」——
+`/clear` 与 `/model` 是 `executeCommand` 内部改的状态，repl 看不见；而
+`ledger.record()` 只有一个调用点，就在 repl 的循环里、紧挨着落盘那几行。
+给一个看得见的写入点加一套广播，是给不存在的问题上保险（D65）。
+它仍然并入 `SessionChange` 联合，只是为了不让 `store.append` 的签名放宽。
+
+由此推出一条常被写错的规则：**`/clear` 不清账本**。账本记的是「这个会话文件
+累计花了多少」，钱已经花掉了，与消息内容无关（D64）。回放时 `clear` 同样
+只清 `messages`，不动 `usageEntries`。
+
+四个设计点：
 
 1. **广播，而不是让 repl 在每个变更点手动写。** `/clear` 与 `/model <name>` 是
    `executeCommand` **内部**改的状态，repl 的循环里看不见它们 —— 「记得每处补写」
@@ -370,7 +407,10 @@ cli/store.ts：serializeRecord(change) + '\n' → appendFileSync(<id>.jsonl)
    降级方向是「磁盘落后于内存 + 一行警告」，而不是丢弃这次对话（见 D34，实现在
    `cli/repl.ts` 的 `reportWriteFailure`，**只警告一次**）。
 3. **只读操作永不广播。** `toMessages()` / `history()` / `get model`（即 `/model`
-   无参数的查询分支）都不写状态，也就不写日志。
+   无参数的查询分支）都不写状态，也就不写日志。`/usage` 同理 —— 它是纯查询，
+   `test/commands.test.ts` 专门用写入探针钉住了「零广播」。
+4. **写盘失败共用同一条降级路径。** usage 记录的 `append` 也包在 `reportWriteFailure`
+   里，所以「只警告一次」这条降级自动覆盖它，不需要第二套闩（`test/repl.test.ts`）。
 
 > 回放的 `clear` **只清消息、不清模型**，与 `Session.clear()` 的语义严格对齐 ——
 > 否则 resume 出来的模型会和清空前不一致（见 `core/journal.ts` 的 `replay`）。
