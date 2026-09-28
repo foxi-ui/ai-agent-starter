@@ -221,7 +221,8 @@ export function parseRecord(line: string): SessionRecord | null {
 
     default:
       // 不认识的 type 也当坏行跳过。将来真加了新记录类型，
-      // 旧版本程序读到它会跳过而不是崩 —— 这条路径顺便充当了格式兼容位。
+      // 旧版本程序读到它会跳过而不是崩 —— 这条路径顺便充当了格式兼容位
+      // （`usage` 在 M4b 之前正是靠它被跳过的，见 test/journal.test.ts）。
       return null;
   }
 }

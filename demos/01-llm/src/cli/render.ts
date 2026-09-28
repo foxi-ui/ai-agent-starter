@@ -10,6 +10,7 @@
 
 import type { StreamEvent } from '@/core/types.ts';
 import { COMMAND_NAMES, type CommandResult } from '@/core/commands.ts';
+import { periodAt, costOf, isOutsideHolidayTable, HOLIDAY_TABLE_YEAR } from '@/core/usage.ts';
 
 /** 一轮回答的渲染器；每轮新建一个，用完即弃 */
 export interface StreamRenderer {
@@ -164,6 +165,44 @@ function formatSessionTime(id: string): string {
 }
 
 /**
+ * 一个字符在终端里占几列。
+ *
+ * 汉字、全角标点在等宽终端里占 **2 列**，而 `String.length` 把它们算作 1 ——
+ * 所以用 `padEnd` 对齐中文表头一定会错位。
+ *
+ * ⚠️ **这不是一个通用的 Unicode 宽度实现**，只覆盖本项目表头用到的那几个词
+ * （模型 / 时段 / 输入 / 命中缓存 / 输出 / 思考 / 费用）。别拿它去处理 emoji、
+ * 组合字形或其它东亚文字。
+ */
+const WIDE_CHAR = /[　-〿぀-ヿ㐀-䶿一-鿿＀-｠￠-￦]/;
+
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const char of text) width += WIDE_CHAR.test(char) ? 2 : 1;
+  return width;
+}
+
+/** 按**显示宽度**右侧补空格 */
+function padDisplay(text: string, width: number): string {
+  return text + ' '.repeat(Math.max(0, width - displayWidth(text)));
+}
+
+/**
+ * 千分位。
+ *
+ * **不用 `toLocaleString`** —— 它依赖 ICU 构建，同一份输入在不同 Node
+ * 构建上可能得到不同结果，测试会跟着飘。这个三行实现结果恒定。
+ */
+function group(value: number): string {
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** 金额 → `¥0.00405`；无价目 → `—`（不是 ¥0.00000） */
+function formatAmount(cny: number | null): string {
+  return cny === null ? '—' : `¥${cny.toFixed(5)}`;
+}
+
+/**
  * 渲染命令的执行结果。
  *
  * 走 **stdout**：这是用户主动索要的输出，`pnpm start > answers.txt` 里
@@ -213,6 +252,108 @@ export function renderCommandResult(
           `${marker} ${session.id}  ${formatSessionTime(session.id)}  ${session.messageCount} 条`,
         );
       }
+      return;
+    }
+
+    case 'usage': {
+      write(`本会话用量（${result.entries.length} 轮）`);
+
+      if (result.entries.length === 0) {
+        write('本会话还没有用量记录。');
+        write('范围：本会话的全部记录，含 --resume 恢复的历史。');
+        return;
+      }
+
+      // 逐行算好，再统一算列宽 —— 表头也要参与，否则中文表头会窄一截
+      const rows = result.entries.map((entry, index) => {
+        const period = periodAt(new Date(entry.at));
+        return [
+          String(index + 1),
+          entry.model,
+          period === 'peak' ? '高峰' : '空闲',
+          group(entry.usage.promptTokens),
+          group(entry.usage.cachedTokens),
+          group(entry.usage.completionTokens),
+          group(entry.usage.reasoningTokens),
+          formatAmount(costOf(entry.usage, entry.model, period)),
+        ];
+      });
+
+      const headers = ['#', '模型', '时段', '输入', '命中缓存', '输出', '思考', '费用'];
+
+      // 合计行：前两列留空（不填模型与时段 —— 它们是「每条」的属性）
+      const totalAmount =
+        result.cost.pricedRounds === 0 && result.cost.unpricedModels.length > 0
+          ? null
+          : result.cost.cny;
+      const totalRow = [
+        '合计', '', '',
+        group(result.total.promptTokens),
+        group(result.total.cachedTokens),
+        group(result.total.completionTokens),
+        group(result.total.reasoningTokens),
+        formatAmount(totalAmount),
+      ];
+
+      const widths = headers.map((header, i) =>
+        Math.max(displayWidth(header), ...rows.map((r) => displayWidth(r[i]))),
+      );
+      // **不做 trimEnd**：末列补齐的空格一旦削掉，各行的显示宽度就会不等 ——
+      // 表头末列是「费用」（宽度 4），数据行末列是「¥0.00405」（宽度 8），
+      // 削掉补齐部分之后两者差 4 列。整表对齐的代价只是行尾多几个看不见的空格。
+      //
+      // 缩进也**必须每行都有**（含表头与分隔线）：表头不加缩进的话，
+      // 它会比数据行整体左移 2 列，`#` 与行号对不上。
+      const renderRow = (cells: string[]): string =>
+        `  ${cells.map((cell, i) => padDisplay(cell, widths[i])).join('  ')}`;
+
+      write(renderRow(headers));
+      for (const row of rows) write(renderRow(row));
+      write(`  ${'─'.repeat(widths.reduce((a, b) => a + b + 2, -2))}`);
+      write(renderRow(totalRow));
+      write('');
+
+      // 未定价模型：单独一行，且**不与合计混在一起**
+      if (result.cost.unpricedModels.length > 0) {
+        const count = result.entries.length - result.cost.pricedRounds;
+        write(
+          `注意：${count} 轮使用未定价模型（${result.cost.unpricedModels.join(', ')}），未计入合计。`,
+        );
+      }
+
+      // 估算校准：只有拿到过真实用量才有意义
+      if (result.total.promptTokens > 0) {
+        const estimated = result.entries.reduce((sum, e) => sum + e.estimatedPromptTokens, 0);
+        const actual = result.total.promptTokens;
+        const delta = ((estimated - actual) / actual) * 100;
+        const direction = estimated > actual ? '估算偏保守' : estimated < actual ? '估算偏激进' : '与真实一致';
+        write(
+          `上下文估算：合计估算 ${group(estimated)} / 真实 ${group(actual)}（${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%，${direction}）`,
+        );
+      }
+
+      // 峰谷拆分：只在两档都出现过时才有信息量
+      if (result.cost.pricedRounds >= 2 && result.cost.peakCny > 0 && result.cost.offPeakCny > 0) {
+        write(
+          `时段拆分：高峰部分 ${formatAmount(result.cost.peakCny)} / 空闲部分 ${formatAmount(result.cost.offPeakCny)}`,
+        );
+      }
+
+      // 表过期是**必须可见**的：静默用一张过期表会让 2027 年春节
+      // 被当成普通工作日按高峰计价（D-M4b-14）
+      if (result.entries.some((e) => isOutsideHolidayTable(new Date(e.at)))) {
+        write(
+          `注意：节假日表只覆盖 ${HOLIDAY_TABLE_YEAR} 年，${HOLIDAY_TABLE_YEAR + 1} 年及以后的记录未按法定节假日扣除。`,
+        );
+      }
+
+      // 口径与范围这两行**始终**输出（D-M4b-8）：金额与真实账单之间隔着
+      // 估算器的误差、中断的轮次、节假日表的覆盖范围三件事，
+      // 不写出来用户就会把 ¥0.01328 当成账单
+      write(
+        `口径：按 docs/deepseek-api-facts.md 的价目表分高峰/空闲两档估算（含 ${HOLIDAY_TABLE_YEAR} 年法定节假日表），未经账单核对。`,
+      );
+      write('范围：本会话的全部记录，含 --resume 恢复的历史。');
       return;
     }
 

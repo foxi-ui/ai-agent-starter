@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { parseCommand, executeCommand, COMMAND_NAMES } from '@/core/commands.ts';
 import { Session } from '@/core/session.ts';
 import type { SessionStore, SessionSummary } from '@/core/journal.ts';
+import { UsageLedger } from '@/core/usage.ts';
+import type { UsageEntry } from '@/core/usage.ts';
 
 // 假 store：/sessions 命令唯一需要的外部依赖。
 // 本次不给它加断言 —— 只为了让现有的 executeCommand 调用点能编译通过。
@@ -19,7 +21,11 @@ function fakeStore(): SessionStore {
   };
 }
 
-const deps = { store: fakeStore(), currentSessionId: '20260924-143022-a3f1' };
+const deps = {
+  store: fakeStore(),
+  currentSessionId: '20260924-143022-a3f1',
+  ledger: new UsageLedger(),
+};
 
 test('不以 / 开头不是命令', () => {
   assert.deepEqual(parseCommand('今天天气怎么样'), { kind: 'none' });
@@ -211,6 +217,7 @@ test('executeCommand /sessions 原样交出列表与当前会话 id', () => {
   const result = executeCommand('sessions', '', new Session('deepseek-flash'), {
     store,
     currentSessionId: CURRENT,
+    ledger: new UsageLedger(),
   });
 
   // 期望值在这里**手写第二遍**，不复用上面传进假 store 的那个数组字面量：
@@ -232,6 +239,7 @@ test('executeCommand /sessions 空表返回空数组，不报错', () => {
   const result = executeCommand('sessions', '', new Session('deepseek-flash'), {
     store,
     currentSessionId: CURRENT,
+    ledger: new UsageLedger(),
   });
 
   assert.deepEqual(result, { kind: 'sessions', sessions: [], currentId: CURRENT });
@@ -239,7 +247,7 @@ test('executeCommand /sessions 空表返回空数组，不报错', () => {
 
 test('/sessions 忽略多余参数（与 /model 一致，不报错）', () => {
   const { store } = listStore([{ id: '20260924-143022-a3f1', messageCount: 1 }]);
-  const deps = { store, currentSessionId: CURRENT };
+  const deps = { store, currentSessionId: CURRENT, ledger: new UsageLedger() };
   const s = new Session('deepseek-flash');
 
   const withArgument = executeCommand('sessions', 'extra', s, deps);
@@ -252,4 +260,78 @@ test('/sessions 忽略多余参数（与 /model 一致，不报错）', () => {
   });
   // 「忽略」的语义：带不带参数，结果完全一样
   assert.deepEqual(withArgument, withoutArgument);
+});
+
+// ── /usage（M4b） ─────────────────────────────────────────────────────
+
+test('parseCommand 认识 /usage', () => {
+  assert.deepEqual(parseCommand('/usage'), {
+    kind: 'known',
+    name: 'usage',
+    argument: '',
+  });
+});
+
+test('/usage 空账本返回空结果', () => {
+  const ledger = new UsageLedger();
+  const result = executeCommand('usage', '', new Session('deepseek-flash'), {
+    store: fakeStore(),
+    currentSessionId: CURRENT,
+    ledger,
+  });
+
+  assert.equal(result.kind, 'usage');
+  if (result.kind !== 'usage') return;
+  assert.deepEqual(result.entries, []);
+  assert.equal(result.total.promptTokens, 0);
+  assert.equal(result.cost.cny, 0);
+});
+
+test('/usage 返回账本内容', () => {
+  const entry: UsageEntry = {
+    at: '2026-09-28T02:00:00.000Z',
+    model: 'deepseek-flash',
+    usage: {
+      promptTokens: 100, completionTokens: 20, totalTokens: 120,
+      cachedTokens: 60, cacheMissTokens: 40, reasoningTokens: 5,
+    },
+    estimatedPromptTokens: 95,
+  };
+  const ledger = new UsageLedger([entry]);
+  const result = executeCommand('usage', '', new Session('deepseek-flash'), {
+    store: fakeStore(),
+    currentSessionId: CURRENT,
+    ledger,
+  });
+
+  assert.equal(result.kind, 'usage');
+  if (result.kind !== 'usage') return;
+  assert.deepEqual(result.entries, [entry]);
+  assert.equal(result.total.promptTokens, 100);
+});
+
+test('/usage 是只读的：不写会话', () => {
+  // 与 /model 的查询分支同一处置 —— 查询不该有副作用
+  const writes: unknown[] = [];
+  const probe = new Session('deepseek-flash', {
+    onChange: (change) => writes.push(change),
+  });
+  const ledger = new UsageLedger();
+
+  executeCommand('usage', '', probe, {
+    store: fakeStore(),
+    currentSessionId: CURRENT,
+    ledger,
+  });
+
+  assert.equal(writes.length, 0);
+});
+
+test('/usage 忽略多余参数', () => {
+  const result = executeCommand('usage', 'foo bar', new Session('deepseek-flash'), {
+    store: fakeStore(),
+    currentSessionId: CURRENT,
+    ledger: new UsageLedger(),
+  });
+  assert.equal(result.kind, 'usage');
 });

@@ -9,6 +9,7 @@ import { Session } from '@/core/session.ts';
 import { fitToBudget } from '@/core/context.ts';
 import { parseCommand, executeCommand } from '@/core/commands.ts';
 import { createStreamRenderer, renderCommandResult, renderUnknownCommand } from '@/cli/render.ts';
+import { UsageLedger } from '@/core/usage.ts';
 import type { ChatOptions, Message } from '@/core/types.ts';
 import type { SessionStore } from '@/core/journal.ts';
 import type { LLMClient } from '@/llm/client.ts';
@@ -147,6 +148,9 @@ export async function runRepl(
         const result = executeCommand(parsed.name, parsed.argument, session, {
           store: options.store,
           currentSessionId: options.sessionId,
+          // TODO(M4b Task 10)：换成 runRepl 里那个真实的账本。
+          // 这里先放一个空的只为让类型通过 —— 此时 /usage 恒为空。
+          ledger: new UsageLedger(),
         });
         // 命令结果走 stdout：用户主动索要的输出
         renderCommandResult(result, { output: options.output });

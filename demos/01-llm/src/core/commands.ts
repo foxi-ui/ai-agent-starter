@@ -6,12 +6,13 @@
 //
 // 好处：命令的全部行为都能在无 IO 的情况下断言。
 
-import type { Message } from '@/core/types.ts';
+import type { Message, TokenUsage } from '@/core/types.ts';
 import type { Session } from '@/core/session.ts';
 import type { SessionSummary, SessionStore } from '@/core/journal.ts';
+import type { UsageEntry, UsageLedger, CostBreakdown } from '@/core/usage.ts';
 
 /** 当前支持的命令名 */
-export type CommandName = 'clear' | 'history' | 'model' | 'sessions';
+export type CommandName = 'clear' | 'history' | 'model' | 'sessions' | 'usage';
 
 /**
  * 全部可用命令。
@@ -19,7 +20,13 @@ export type CommandName = 'clear' | 'history' | 'model' | 'sessions';
  * 未知命令的提示文案由它拼出来（见 `cli/render.ts`），
  * 所以新增命令只要改这一处。
  */
-export const COMMAND_NAMES: readonly CommandName[] = ['clear', 'history', 'model', 'sessions'];
+export const COMMAND_NAMES: readonly CommandName[] = [
+  'clear',
+  'history',
+  'model',
+  'sessions',
+  'usage',
+];
 
 /**
  * 一行输入的解析结果。
@@ -44,6 +51,8 @@ export interface CommandDeps {
   store: SessionStore;
   /** 当前会话的 id，用于在 /sessions 列表里打 * 标记 */
   currentSessionId: string;
+  /** 用量账本。core 不落盘、不读文件，所以由调用方注入（与 store 同一套路） */
+  ledger: UsageLedger;
 }
 
 /** 命令执行的结果，供 cli 层渲染 */
@@ -52,7 +61,16 @@ export type CommandResult =
   | { kind: 'history'; messages: Message[] }
   | { kind: 'model-current'; model: string }
   | { kind: 'model-changed'; model: string }
-  | { kind: 'sessions'; sessions: SessionSummary[]; currentId: string };
+  | { kind: 'sessions'; sessions: SessionSummary[]; currentId: string }
+  | {
+      kind: 'usage';
+      /** 账本内容（已按 /usage 需要的顺序排好） */
+      entries: UsageEntry[];
+      /** 字段级合计 */
+      total: TokenUsage;
+      /** 金额合计、峰谷拆分与未定价模型 */
+      cost: CostBreakdown;
+    };
 
 /**
  * 解析一行输入。
@@ -136,6 +154,16 @@ export function executeCommand(
         kind: 'sessions',
         sessions: deps.store.list(),
         currentId: deps.currentSessionId,
+      };
+
+    case 'usage':
+      // 纯查询：不写 session、不广播、不动账本。
+      // 参数被忽略 —— 与 /history 的处置一致
+      return {
+        kind: 'usage',
+        entries: deps.ledger.list(),
+        total: deps.ledger.total(),
+        cost: deps.ledger.cost(),
       };
   }
 }

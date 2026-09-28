@@ -6,6 +6,8 @@ import {
   renderCommandResult,
   renderUnknownCommand,
 } from '@/cli/render.ts';
+import { UsageLedger } from '@/core/usage.ts';
+import type { UsageEntry } from '@/core/usage.ts';
 
 function collector(): { chunks: string[]; stream: Writable } {
   const chunks: string[] = [];
@@ -260,7 +262,7 @@ test('renderUnknownCommand 写 stderr，可用列表来自 COMMAND_NAMES', () =>
   renderUnknownCommand('/foo', { errorOutput: err.stream });
   assert.equal(
     err.chunks.join(''),
-    '未知命令：/foo。可用：/clear /history /model /sessions\n',
+    '未知命令：/foo。可用：/clear /history /model /sessions /usage\n',
   );
 });
 
@@ -382,4 +384,88 @@ test('usage 夹在正文与 done 之间时，正文与前缀不受影响', () =>
   // `AI: ` 前缀只写一次；usage 事件不额外产生前缀
   assert.equal(out.chunks.join(''), 'AI: 你好\n');
   assert.deepEqual(err.chunks, []);
+});
+
+// ── /usage 渲染（M4b） ────────────────────────────────────────────────
+
+/** 渲染一个 /usage 结果，把 stdout 拼成整串 */
+function renderUsage(entries: UsageEntry[]): string {
+  const ledger = new UsageLedger(entries);
+  const out = collector();
+  renderCommandResult(
+    { kind: 'usage', entries: ledger.list(), total: ledger.total(), cost: ledger.cost() },
+    { output: out.stream },
+  );
+  return out.chunks.join('');
+}
+
+const sampleEntry = (fields: Partial<UsageEntry> = {}): UsageEntry => ({
+  at: '2026-09-28T02:00:00.000Z', // 周一北京 10:00 → 高峰
+  model: 'deepseek-flash',
+  usage: {
+    promptTokens: 1203, completionTokens: 456, totalTokens: 1659,
+    cachedTokens: 1024, cacheMissTokens: 179, reasoningTokens: 120,
+  },
+  estimatedPromptTokens: 1180,
+  ...fields,
+});
+
+test('/usage 空账本给出提示，且包含「范围」那行', () => {
+  const text = renderUsage([]);
+  assert.match(text, /本会话还没有用量记录/);
+  // 这行是 D-M4b-8 的硬要求：让「账本覆盖哪些记录」这件事自己说出来
+  assert.match(text, /范围：本会话的全部记录/);
+});
+
+test('/usage 表格含表头、数据行与合计行', () => {
+  const text = renderUsage([sampleEntry()]);
+  assert.match(text, /模型/);
+  assert.match(text, /命中缓存/);
+  assert.match(text, /合计/);
+  assert.match(text, /deepseek-flash/);
+  assert.match(text, /1,203/); // 千分位
+  assert.match(text, /高峰/);
+});
+
+test('/usage 表头与数据行的显示宽度一致（中文占 2 列）', () => {
+  // padEnd 按 UTF-16 码元算的话，含中文的表头会比数据行短一截，
+  // 终端里看就是错位的
+  const lines = renderUsage([sampleEntry()]).split('\n');
+  const headerLine = lines.find((l) => l.includes('模型'))!;
+  const dataLine = lines.find((l) => l.includes('deepseek-flash'))!;
+
+  const width = (s: string): number => {
+    let w = 0;
+    // 与实现同一个近似：CJK 统一表意文字算 2 列
+    for (const ch of s) w += /[一-鿿]/.test(ch) ? 2 : 1;
+    return w;
+  };
+  assert.equal(width(headerLine), width(dataLine));
+});
+
+test('/usage 金额保留 5 位小数', () => {
+  // 1024/1e6*0.04 + 179/1e6*2 + 456/1e6*8 = 0.00404696
+  assert.match(renderUsage([sampleEntry()]), /¥0\.00405/);
+});
+
+test('/usage 未定价模型的费用显示为 —，并单列一行', () => {
+  const text = renderUsage([sampleEntry({ model: 'gpt-4' })]);
+  assert.match(text, /—/);
+  assert.match(text, /未定价模型/);
+  assert.doesNotMatch(text, /¥0\.00000/); // 绝不能把 null 当 0
+});
+
+test('/usage 输出含口径行', () => {
+  assert.match(renderUsage([sampleEntry()]), /口径：.*高峰.*空闲/);
+});
+
+test('/usage 有超出节假日表范围的记录时给出提示', () => {
+  assert.match(
+    renderUsage([sampleEntry({ at: '2027-01-04T02:00:00.000Z' })]),
+    /节假日表只覆盖 2026/,
+  );
+});
+
+test('/usage 全是 2026 的记录时不出现过期提示', () => {
+  assert.doesNotMatch(renderUsage([sampleEntry()]), /节假日表只覆盖/);
 });
