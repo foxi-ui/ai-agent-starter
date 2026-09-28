@@ -58,8 +58,8 @@ export type FinishReason =
  * llm 层把「DeepSeek/OpenAI 的 SSE chunk」翻译成这三种事件，
  * cli 层只认这三种，不知道 SSE 的存在。
  *
- * 注意：**没有 `usage` 事件**。Token 统计属于 M4，现在解析了也没有消费者，
- * 与其定义一个没人用的 `TokenUsage` 并连带写测试，不如等 M4 一起做。
+ * 注意：**没有 `usage` 事件**。Token 统计属于 M4b，现在解析了也没有消费者，
+ * 与其定义一个没人用的 `TokenUsage` 并连带写测试，不如等 M4b 一起做。
  */
 export type StreamEvent =
   | { type: 'text-delta'; text: string }
@@ -76,4 +76,16 @@ export type StreamEvent =
 export interface ChatOptions {
   /** 本次请求使用的模型；不传则由 client 用它构造时的默认值 */
   model?: string;
+  /**
+   * 本轮的 thinking 开关。
+   *
+   * `false` → 请求体带 `thinking: { type: 'disabled' }`；
+   * 为 `true` 或**不传** → 请求体完全不带这个字段（服务端默认开启，见
+   * `docs/deepseek-api-facts.md`）。「默认行为不显式声明」沿用最小请求体的原则。
+   *
+   * 这里刻意用 `boolean` 而不是照抄 API 的 `{ type: 'enabled' | 'disabled' }`：
+   * 本文件是**项目自己的**类型，不是 API 形状的镜像 —— 拼请求体是 `llm/` 层的职责。
+   * 照抄的话，换服务商时这一层也要跟着改。
+   */
+  thinking?: boolean;
 }

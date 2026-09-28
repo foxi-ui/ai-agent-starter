@@ -309,7 +309,8 @@ export interface FittedContext {
  * 裁剪单位是「轮」，按 user 消息切分（见 D-M4a-3）。
  *
  * @param messages 已组装好的完整数组，index 0 是 system，最后一条是当前 user 消息
- * @param budget 软预算（token）。<= 0 时定义为「只保留 system 与最后一条」，不是兜底
+ * @param budget 软预算（token）。`<= 0` **不需要特例**：正常裁剪会一路丢到
+ *   「只剩最后一组」为止，函数因此对任何输入都有定义
  */
 export function fitToBudget(messages: Message[], budget: number): FittedContext;
 ```
@@ -454,7 +455,7 @@ thinking 关闭后服务端不再返回 `reasoning_content`，所以 `reasoning-
 | 单条消息本身就超预算 | **不裁**，原样发给 API 让它报错。静默丢掉用户的问题比报错糟得多 |
 | 开头有不以 user 起始的残余 | 单独成一组，最先被丢 |
 | `messages` 长度为 0 或 1 | 原样返回，`dropped: 0`（没有可裁的东西） |
-| `budget <= 0` | 定义为「只保留 system 与最后一条」——这是**语义定义**，不是兜底：让函数对任何输入都有定义，而不是靠调用方保证 |
+| `budget <= 0` | 走正常裁剪路径，停在「只剩最后一组」。**不需要特例** —— 它只是「预算极小」的极端情形，语义上没有分叉 |
 | 历史里有两个相邻 user（失败轮次，D7） | 各成一组，可被分别丢弃 |
 | 裁剪后仍超预算（比如最后一条自己就超） | 不报错、不循环——按上一条原样发出 |
 

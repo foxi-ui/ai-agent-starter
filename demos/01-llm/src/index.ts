@@ -102,4 +102,9 @@ runRepl(createDeepSeekClient(config), {
   sessionId,
   history,
   store,
+  // 三个开关原样透传。它们是「本次启动的偏好」而不是会话状态，
+  // 所以不进 Session、也不落盘（见 DECISIONS D-M4a-7）
+  showReasoning: args.showReasoning,
+  noThinking: args.noThinking,
+  maxContext: args.maxContext,
 });

@@ -50,6 +50,20 @@ function readWithIdleTimeout(
 }
 
 /**
+ * 把 `ChatOptions.thinking` 翻译成请求体里的字段。
+ *
+ * **只在关闭时**才产生字段：不传或为 `true` 时返回空对象，请求体里连 `thinking`
+ * 这个键都不出现 —— 服务端默认就是开启（见 `docs/deepseek-api-facts.md`），
+ * 显式声明默认值只会多出一个可能与服务端漂移的分支。
+ *
+ * `chat()` 与非流式/流式两条路径共用它，避免两处各写一遍（否则两个方法的行为
+ * 会悄悄不一致 —— 这正是 D-M4a-11 要防的）。
+ */
+function thinkingField(options?: ChatOptions): { thinking?: { type: 'disabled' } } {
+  return options?.thinking === false ? { thinking: { type: 'disabled' } } : {};
+}
+
+/**
  * 造一个调用 DeepSeek 接口的客户端（非流式 `chat` + 流式 `chatStream`）。
  *
  * @param config 包含 apiKey / baseUrl / model
@@ -80,7 +94,11 @@ export function createDeepSeekClient(
         //
         // 本次请求的模型优先；没传才回落到构造时的默认值。
         // 这样「当前模型」可以随会话切换，而 client 本身保持无状态。
-        body: JSON.stringify({ model: options?.model ?? config.model, messages }),
+        body: JSON.stringify({
+          model: options?.model ?? config.model,
+          messages,
+          ...thinkingField(options),
+        }),
       });
 
       // 非 2xx（如 401 密钥错误、429 限流）统一当作失败抛出，
@@ -125,13 +143,14 @@ export function createDeepSeekClient(
       const response = await fetch(url, {
         method: 'POST',
         headers,
-        // 只发三个字段。不发 stream_options —— 官方文档没有要求流式必须带它
-        // （依赖方向相反：单独传 stream_options 才 400），
-        // 而 M2 也不消费 usage，发了没有收益。
+        // 只发三个必填字段（+ 可选的 thinking）。不发 stream_options ——
+        // 官方文档没有要求流式必须带它（依赖方向相反：单独传 stream_options 才 400），
+        // 而 usage 要到 M4b 才有消费者，现在发了没有收益。
         body: JSON.stringify({
           model: options?.model ?? config.model,
           messages,
           stream: true,
+          ...thinkingField(options),
         }),
       });
 

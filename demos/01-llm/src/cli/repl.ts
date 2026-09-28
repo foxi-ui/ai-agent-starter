@@ -6,9 +6,10 @@
 
 import { createInterface } from 'node:readline';
 import { Session } from '@/core/session.ts';
+import { fitToBudget } from '@/core/context.ts';
 import { parseCommand, executeCommand } from '@/core/commands.ts';
 import { createStreamRenderer, renderCommandResult, renderUnknownCommand } from '@/cli/render.ts';
-import type { Message } from '@/core/types.ts';
+import type { ChatOptions, Message } from '@/core/types.ts';
 import type { SessionStore } from '@/core/journal.ts';
 import type { LLMClient } from '@/llm/client.ts';
 
@@ -43,6 +44,18 @@ export interface ReplOptions {
   history: Message[];
   /** 会话存储。落盘失败时的降级策略见下面的 onChange */
   store: SessionStore;
+  /**
+   * 展开思考全文到 stderr，来自 `--show-reasoning`。
+   *
+   * 与下面两个一样声明为**必填**：它们都是从命令行一路传下来的开关，
+   * 漏传一个就会静默退回默认行为，而用户明明敲了那个参数 ——
+   * 让它在编译期暴露，比让用户对着没生效的开关猜要好。
+   */
+  showReasoning: boolean;
+  /** 关闭 thinking，来自 `--no-thinking` */
+  noThinking: boolean;
+  /** 上下文软预算（token），来自 `--max-context` */
+  maxContext: number;
 }
 
 /**
@@ -146,6 +159,7 @@ export async function runRepl(
       const renderer = createStreamRenderer({
         output: options.output,
         errorOutput: options.errorOutput,
+        showReasoning: options.showReasoning,
       });
 
       // 本轮正文。渲染器只呈现，累积是这里的职责 ——
@@ -153,11 +167,27 @@ export async function runRepl(
       let text = '';
 
       try {
-        // 把「system + 目前为止的全部历史」发过去，模型据此理解上下文；
-        // 当前模型随请求走，所以中途切换模型能立即生效
-        const stream = client.chatStream(session.toMessages(SYSTEM_PROMPT), {
-          model: session.model,
-        });
+        // 组装 → **裁剪** → 请求。
+        //
+        // 裁剪只作用于这一次请求：Session 与磁盘上的 JSONL 仍是完整历史，
+        // 所以下一轮会拿完整历史重新裁一遍。这是刻意的 ——
+        // 「发给模型的内容」与「会话记得的内容」是两回事（D-M4a-5），
+        // 回写就会多出一条静默删改历史的路径。这一处的 `session.append` 不受影响。
+        const fitted = fitToBudget(session.toMessages(SYSTEM_PROMPT), options.maxContext);
+        if (fitted.dropped > 0) {
+          // 一行警告，不是每轮都报：静默的话用户只会觉得「模型怎么把前面忘了」
+          writeError(
+            `[上下文] 已裁剪 ${fitted.dropped} 条最早的消息（约 ${fitted.droppedTokens} token）`,
+          );
+        }
+
+        // 把「system + 裁过的历史」发过去，模型据此理解上下文；
+        // 当前模型随请求走，所以中途切换模型能立即生效。
+        // thinking 只在关闭时才放进 options（不传即为服务端默认的开启）。
+        const chatOptions: ChatOptions = { model: session.model };
+        if (options.noThinking) chatOptions.thinking = false;
+
+        const stream = client.chatStream(fitted.messages, chatOptions);
 
         for await (const event of stream) {
           renderer.onEvent(event);

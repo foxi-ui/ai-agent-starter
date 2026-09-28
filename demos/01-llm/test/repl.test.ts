@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable, Writable } from 'node:stream';
 import { runRepl, SYSTEM_PROMPT } from '@/cli/repl.ts';
+import { DEFAULT_MAX_CONTEXT } from '@/cli/args.ts';
 import type { SessionChange, SessionStore } from '@/core/journal.ts';
 import type { LLMClient } from '@/llm/client.ts';
 
@@ -127,6 +128,9 @@ test('一问一答：输出是 You:/AI: 交替的对话记录', async () => {
     sessionId: '20260924-143022-a3f1',
     history: [],
     store: fakeStore(),
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
   // 逐字节断言，而不是 some() + includes()：
   // 后者对「有几个提示符」「有没有 AI: 」都恒为真。
@@ -155,6 +159,9 @@ test('多轮：每一问前都有 You: 提示符，每一答前都有 AI: 前缀
     sessionId: '20260924-143022-a3f1',
     history: [],
     store: fakeStore(),
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
   assert.equal(chunks.join(''), 'You: AI: 回答一\nYou: AI: 回答二\nYou: ');
 });
@@ -171,6 +178,9 @@ test('失败轮次不输出 AI: 前缀', async () => {
     sessionId: '20260924-143022-a3f1',
     history: [],
     store: fakeStore(),
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
   // 关键：绝不能留下一个「有 AI: 但后面什么都没有」的空壳。
   // stdout 里只有两个提示符（第二个是 EOF 前写出的那个），没有任何 AI:。
@@ -191,6 +201,9 @@ test('错误写 stderr，不污染 stdout', async () => {
     sessionId: '20260924-143022-a3f1',
     history: [],
     store: fakeStore(),
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
   const err = errChunks.join('');
   assert.ok(err.startsWith('[error]'));
@@ -212,6 +225,9 @@ test('非 2xx 错误不崩溃，继续下一轮', async () => {
     sessionId: '20260924-143022-a3f1',
     history: [],
     store: fakeStore(),
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
   const joined = chunks.join('');
   assert.ok(joined.includes('恢复'));
@@ -239,6 +255,9 @@ test('多轮对话上下文按序累积', async () => {
     sessionId: '20260924-143022-a3f1',
     history: [],
     store: fakeStore(),
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
   assert.equal(sent.length, 2);
   assert.deepEqual(sent[1], [
@@ -272,6 +291,9 @@ test('正文逐字写 stdout，思考指示只写 stderr', async () => {
     history: [],
     store: fakeStore(),
     model: 'deepseek-flash',
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   const out = chunks.join('');
@@ -303,6 +325,9 @@ test('流中途失败：不追加 assistant，且补上收尾换行', async () =
     history: [],
     store: fakeStore(),
     model: 'deepseek-flash',
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   const out = chunks.join('');
@@ -343,6 +368,9 @@ test('流中途失败：收尾换行写在该行的错误之前（跨流字节�
     history: [],
     store: fakeStore(),
     model: 'deepseek-flash',
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   assert.equal(chunks.join(''), 'You: AI: 半截\n[error] boom\nYou: ');
@@ -371,6 +399,9 @@ test('/clear 之后下一轮的 messages 只剩 system 与当前提问', async (
     history: [],
     store: fakeStore(),
     model: 'deepseek-flash',
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   assert.equal(sent.length, 2);
@@ -405,6 +436,9 @@ test('命令本身不进入上下文', async () => {
     history: [],
     store: fakeStore(),
     model: 'deepseek-flash',
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   // /history 只触发一次请求（就是「问题」那次），且历史里没有 /history
@@ -441,6 +475,9 @@ test('/model 切换后下一轮请求带上新模型', async () => {
     history: [],
     store: fakeStore(),
     model: 'deepseek-flash',
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   assert.deepEqual(models, ['deepseek-flash', 'deepseek-v4-pro']);
@@ -469,6 +506,9 @@ test('未知命令走 stderr，且不触发请求', async () => {
     history: [],
     store: fakeStore(),
     model: 'deepseek-flash',
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   assert.equal(calls, 0);
@@ -502,6 +542,9 @@ test('未知命令之后循环继续，不是 break 出 REPL', async () => {
     history: [],
     store: fakeStore(),
     model: 'deepseek-flash',
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   // 恰好一次：未知命令那次没发，第二行的「问题」发了
@@ -523,6 +566,9 @@ test('/history 的列表走 stdout', async () => {
     history: [],
     store: fakeStore(),
     model: 'deepseek-flash',
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   // 只断言「命令被执行了」（下一轮 messages 里没有 /history）是不够的：
@@ -554,6 +600,9 @@ test('一轮对话落两条记录：user 与 assistant，用的是本次会话�
     sessionId: SESSION_ID,
     history: [],
     store,
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   assert.deepEqual(writes, [
@@ -578,6 +627,9 @@ test('/clear 与 /model 的变更也落盘（它们在 executeCommand 内部改�
     sessionId: SESSION_ID,
     history: [],
     store,
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   assert.deepEqual(
@@ -604,6 +656,9 @@ test('只读命令一条记录都不写', async () => {
     sessionId: SESSION_ID,
     history: [],
     store,
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   // 只读命令若也写盘，日志会莫名其妙地变长，而这些行在回放时什么也不做
@@ -637,6 +692,9 @@ test('落盘失败：stderr 恰好一行警告，且对话继续（内存照常�
     sessionId: SESSION_ID,
     history: [],
     store,
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   // 警告只出一次：每轮都刷同一句会把屏幕占满，反而看不见别的
@@ -691,6 +749,9 @@ test('传入的 history 流进第一轮请求（--resume 后「模型记得」�
       { role: 'assistant', content: '闭包是函数与其词法作用域的组合' },
     ],
     store,
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
   });
 
   assert.deepEqual(sent[0], [
@@ -699,4 +760,186 @@ test('传入的 history 流进第一轮请求（--resume 后「模型记得」�
     { role: 'assistant', content: '闭包是函数与其词法作用域的组合' },
     { role: 'user', content: '用一句话总结我们刚才聊的' },
   ]);
+});
+
+// ── M4a：上下文预算与 --no-thinking ────────────────────────────────────
+//
+// 这一节要同时钉住两件事：**发出去的东西变了**，而**记住的东西没变**。
+// 只测 fitToBudget 的返回值是不够的 —— 那测不到 repl 有没有把裁剪接错线。
+
+test('maxContext 生效：发给模型的是裁过的，落盘的仍是完整历史', async () => {
+  const sent: Array<{ role: string; content: string }[]> = [];
+  const { store, writes } = recordingStore();
+  const { stream, errChunks, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream(messages) {
+      sent.push(messages);
+      yield { type: 'text-delta', text: '新回答' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['新问题']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: [
+      { role: 'user', content: '旧问题一' },
+      { role: 'assistant', content: '旧回答一' },
+      { role: 'user', content: '旧问题二' },
+      { role: 'assistant', content: '旧回答二' },
+    ],
+    store,
+    showReasoning: false,
+    noThinking: false,
+    // 小到只够「system + 当前问题」：两轮旧历史都会被裁掉
+    maxContext: 1,
+  });
+
+  // 发出去的：只剩系统提示与当前问题
+  assert.deepEqual(sent[0], [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: '新问题' },
+  ]);
+
+  // 落盘的：仍是本轮完整的两条记录 —— 裁剪不回写 Session、也不影响落盘（D-M4a-5）
+  assert.deepEqual(
+    writes.map((w) => w.change),
+    [
+      { type: 'message', role: 'user', content: '新问题' },
+      { type: 'message', role: 'assistant', content: '新回答' },
+    ],
+  );
+
+  // 裁剪发生了就警告一行，把「模型怎么忘了」变成可归因的行为
+  assert.match(errChunks.join(''), /\[上下文\] 已裁剪 4 条最早的消息（约 \d+ token）\n/);
+});
+
+test('未裁剪时 stderr 不出现上下文警告', async () => {
+  const { store } = recordingStore();
+  const { stream, errChunks, errStream } = captureOutput();
+
+  await runRepl(fakeClient(['答']), {
+    input: inputFrom(['hi']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: [],
+    store,
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
+  });
+
+  const err = errChunks.join('');
+  assert.ok(!err.includes('已裁剪'), `不该有裁剪警告：${err}`);
+});
+
+test('noThinking 为真时，ChatOptions 里带 thinking: false', async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const { store } = recordingStore();
+  const { stream, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream(_messages, options) {
+      seen.push(options as Record<string, unknown>);
+      yield { type: 'text-delta', text: '答' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['hi']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: [],
+    store,
+    showReasoning: false,
+    noThinking: true,
+    maxContext: DEFAULT_MAX_CONTEXT,
+  });
+
+  assert.deepEqual(seen[0], { model: 'deepseek-flash', thinking: false });
+});
+
+test('noThinking 为假时，ChatOptions 里连 thinking 键都没有', async () => {
+  // 契约是「多一个字段」而不是「字段值不同」：不传即服务端默认的开启（D-M4a-10）
+  const seen: Array<Record<string, unknown>> = [];
+  const { store } = recordingStore();
+  const { stream, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream(_messages, options) {
+      seen.push(options as Record<string, unknown>);
+      yield { type: 'text-delta', text: '答' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['hi']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: [],
+    store,
+    showReasoning: false,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
+  });
+
+  assert.equal('thinking' in seen[0], false);
+  assert.deepEqual(seen[0], { model: 'deepseek-flash' });
+});
+
+test('showReasoning 为真时，思考全文出现在 stderr 而 stdout 干净', async () => {
+  const { store } = recordingStore();
+  const { chunks, stream, errChunks, errStream } = captureOutput();
+  const client: LLMClient = {
+    async chat() {
+      return { content: 'unused' };
+    },
+    async *chatStream() {
+      yield { type: 'reasoning-delta', text: '我先想想' };
+      yield { type: 'text-delta', text: '答案' };
+      yield { type: 'done', reason: 'stop' };
+    },
+  };
+
+  await runRepl(client, {
+    input: inputFrom(['hi']),
+    output: stream,
+    errorOutput: errStream,
+    prompt: 'You: ',
+    model: 'deepseek-flash',
+    sessionId: SESSION_ID,
+    history: [],
+    store,
+    showReasoning: true,
+    noThinking: false,
+    maxContext: DEFAULT_MAX_CONTEXT,
+  });
+
+  assert.equal(errChunks.join(''), '[思考] 我先想想\n');
+  // 结尾那个 `You: ` 是 D15 的已知边界：提示符在**每次读取尝试之前**写出，
+  // EOF 那次也会写，所以输出以它结尾。这里逐字节钉住，顺带确认
+  // stdout 里没有「我先想想」——思考一个字都不能落进答案文件。
+  assert.equal(chunks.join(''), 'You: AI: 答案\nYou: ');
 });

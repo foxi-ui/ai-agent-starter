@@ -32,6 +32,9 @@ llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件�
 因为 `core` 不许写 stdout，所以「改 Session」留在 core、「打印」放进 `cli/render.ts` —— 分层反而更严了。
 **persistence（M3）** 沿用同一条思路再切一刀：会话日志的**格式与回放**（`core/journal.ts`）
 是纯逻辑，**文件读写**（`cli/store.ts`）留在 cli，于是 core 至今不 import `node:fs`。
+**context（M4a）** 是同一法则的又一次应用：上下文预算的裁剪策略是**新增的
+`core/context.ts`** 里的纯函数，由 `cli/repl.ts` 在组装之后调一次 ——
+它**不进 `Session`**，因为预算是策略而不是状态。
 
 ## 模块职责
 
@@ -44,7 +47,8 @@ llm/      DeepSeek adapter：请求构造、响应解析、SSE 分帧与事件�
 | `src/cli/repl.ts` | cli | readline 主循环、解析并执行斜杠命令（经 `core/commands.ts`）、调用 `LLMClient`、经渲染器呈现流式结果（错误直写 stderr）、把会话变更落盘（`onChange`） | HTTP、消息组装细节、记录格式 |
 | `src/core/types.ts` | core | `Role` / `Message` / `ChatResult` / `StreamEvent` / `FinishReason` / `ChatOptions` 类型定义 | 行为 |
 | `src/core/journal.ts` | core | 会话日志的**纯逻辑**：记录类型、序列化/解析、`replay` 回放、会话 id 生成与校验、`SessionStore` 接口 | 文件 IO、打印 |
-| `src/core/session.ts` | core | 消息数组累积；`toMessages(systemPrompt)` 组装请求消息；变更广播（`onChange`） | 网络、打印、落盘 |
+| `src/core/session.ts` | core | 消息数组累积；`toMessages(systemPrompt)` 组装请求消息；变更广播（`onChange`） | 网络、打印、落盘、**预算** |
+| `src/core/context.ts` | core | 上下文预算：`estimateTokens` 保守估算、`fitToBudget` 按轮裁剪（纯函数）；结果**只用于本次请求** | 会话状态、IO、打印 |
 | `src/core/commands.ts` | core | 命令解析（`parseCommand`）与执行（`executeCommand` → `CommandResult`）；只改 `Session`、不打印；外部数据经 `CommandDeps` 注入 | 打印、网络、文件系统 |
 | `src/llm/client.ts` | llm | `LLMClient` 接口 + `LLMClientConfig`（测试接缝） | 具体实现 |
 | `src/llm/deepseek.ts` | llm | `fetch` 调用 `/chat/completions`（非流式 + 流式）、解析 `content`、把 SSE chunk 归一化成 `StreamEvent`、非 2xx 抛错 | 打印、重试 |
@@ -72,9 +76,14 @@ export interface LLMClientConfig {
 export type LLMClientFactory = (config: LLMClientConfig) => LLMClient;
 ```
 
-`ChatOptions` 是**每次请求**的参数（目前只有 `model`，将来还会加 thinking 开关），
-定义在 `core/types.ts`。它随请求传，而不是塞进 `LLMClientConfig` —— 否则 client
-会变成有状态的，多会话共享时互相污染（见 D17）。
+`ChatOptions` 是**每次请求**的参数（`model` 与 `thinking` 开关），定义在 `core/types.ts`。
+它随请求传，而不是塞进 `LLMClientConfig` —— 否则 client 会变成有状态的，
+多会话共享时互相污染（见 D17）。
+
+`thinking` 是 `boolean` 而不是照抄 API 的 `{ type: 'enabled' | 'disabled' }`：
+`core/types.ts` 是**项目自己的**类型，把它拼成请求体的形状是 `llm/` 层的职责。
+`thinking: false` → 请求体带 `{ thinking: { type: 'disabled' } }`；为 `true` 或
+**不传** → 请求体里连这个键都没有（服务端默认为开启，见 D-M4a-10）。
 
 - `cli/repl.ts` 只依赖 `LLMClient`，不知道 DeepSeek 的存在。
 - `llm/deepseek.ts` 是它的一个实现。
@@ -138,6 +147,10 @@ loader-hooks.mjs   在钩子线程中把 @/x 解析为 src/x 的文件 URL
   这类没有对应消息的状态变更同样会被记下来。
 - **磁盘只落后、不阻断**：写盘失败不打断对话，只是磁盘落后于内存并给一行警告（D34）。
 - **会话 id 是路径的一部分**，因此受白名单校验 + 路径包含检查两道路径防线约束（D32）。
+- **裁剪不回写会话**：`fitToBudget` 的结果只用于本次请求，`Session` 与 JSONL 始终是
+  完整历史（D-M4a-5）。
+- **开关不落盘**：`--show-reasoning` / `--no-thinking` / `--max-context` 是「本次启动的
+  偏好」而不是会话状态，因此不进 `Session`、不动 JSONL 格式契约（D-M4a-7）。
 
 ## 运行时数据流
 
@@ -150,7 +163,8 @@ loader-hooks.mjs   在钩子线程中把 @/x 解析为 src/x 的文件 URL
 resolveConfig(process.env)          # 缺 DEEPSEEK_API_KEY → stderr + 退出码 1
       ↓                             #   （排在参数解析之前，保持 M1 的既有行为）
 parseArgs(process.argv.slice(2))    # 非法参数 → stderr + 退出码 1
-      ↓                             #   以上两步都在创建任何文件之前
+      ↓                             #   --resume / --show-reasoning / --no-thinking /
+      ↓                             #   --max-context；前两者互斥。以上两步都在建文件之前
 createFileStore(AI_CHAT_HOME ?? '.sessions')
       ↓
   ┌─ fresh ──────────────────────────────────────────────┐
@@ -165,7 +179,7 @@ createFileStore(AI_CHAT_HOME ?? '.sessions')
   │ stderr: [resumed] <id>（N 条消息）                     │
   └──────────────────────────────────────────────────────┘
       ↓
-runRepl(client, { sessionId, history, store, … })
+runRepl(client, { sessionId, history, store, showReasoning, noThinking, maxContext, … })
 ```
 
 三条诊断信息（`[session]` / `[resumed]` / `[警告]`）都走 **stderr**：它们是诊断，
@@ -184,11 +198,14 @@ readline 读到一行
   ├─ session.append('user', question)
   │       └─ onChange 广播 → store.append(id, change) → 追加一行 JSON
   │
-  ├─ messages = session.toMessages(SYSTEM_PROMPT)
+  ├─ messages = session.toMessages(SYSTEM_PROMPT)     # [system, ...完整历史]
   │
-  ├─ client.chatStream(messages, { model: session.model })
+  ├─ fitToBudget(messages, maxContext)                # 只影响这一次请求（M4a）
+  │       └─ 裁掉了东西 → stderr 一行 [上下文] 警告
+  │
+  ├─ client.chatStream(fitted.messages, { model: session.model, thinking? })
   │       → POST {baseUrl}/chat/completions
-  │         body: { model, messages, stream: true }
+  │         body: { model, messages, stream: true }   # thinking 只在关闭时多一个键
   │       → 逐块 read → TextDecoder(stream) → parseSse 分帧 → 归一化成 StreamEvent
   │
   ├─ 成功：text 累积 → session.append('assistant', text)
@@ -241,7 +258,32 @@ session.toMessages(SYSTEM_PROMPT)
 
 `systemPrompt` 为空串时不插入 `system` 消息（便于测试与后续自定义）。
 
-### 步骤 4：发起请求
+### 步骤 4：裁剪到预算之内（M4a）
+
+```ts
+const fitted = fitToBudget(session.toMessages(SYSTEM_PROMPT), options.maxContext);
+if (fitted.dropped > 0) {
+  writeError(`[上下文] 已裁剪 ${fitted.dropped} 条最早的消息（约 ${fitted.droppedTokens} token）`);
+}
+```
+
+`fitToBudget`（`src/core/context.ts`）是**纯函数**，只做三件事：估算、按轮分组、
+从最老的组开始丢。两条规则不可违反：**`system` 永不裁**、**最后一组（当前问题）永不裁**。
+
+三个设计点：
+
+1. **裁剪结果只用于本次请求，不回写 `Session`、不影响落盘。** `Session` 与 JSONL 始终
+   是完整历史，所以每一轮都会拿完整历史重新裁一遍。这是「发给模型的内容」与
+   「会话记得的内容」的区别 —— 与 D7 的「屏幕上看到的 ≠ 模型记得的」是同一类边界（D-M4a-5）。
+2. **按 `user` 消息切轮，不按 role 交替推。** 失败的轮次只留 `user` 不留 `assistant`（D7），
+   历史里会出现两个相邻的 `user`；按交替推会在那里切错（D-M4a-3）。
+3. **裁掉了才警告，且只一行。** 静默的话用户只会觉得「模型怎么把前面忘了」（D-M4a-4）。
+
+估算用 `chars / 1.5` 上取整，**不是**蓝图写的 `chars / 4` —— 后者对中文是低估，
+方向恰好不保守（D-M4a-1）。`--max-context` 可以把预算调到几百 token，
+让这条路径在真实使用中能被观察到。
+
+### 步骤 5：发起请求
 
 `createDeepSeekClient`（`src/llm/deepseek.ts`）用原生 `fetch` 发一次 POST：
 
@@ -265,9 +307,9 @@ response.body.getReader()  逐块 read 出 Uint8Array
       ↓  归一化                                          data 里的 JSON → StreamEvent
 ```
 
-### 步骤 5：解析响应（`chat()` 的非流式路径）
+### 步骤 6：解析响应（`chat()` 的非流式路径）
 
-流式路径的正文来自下面步骤 6 的 `text-delta` 累积。而 `chat()` 这条**非流式**路径
+流式路径的正文来自下面步骤 7 的 `text-delta` 累积。而 `chat()` 这条**非流式**路径
 仍然保留着（见 D16），它一次拿到完整 JSON，解析方式没变：
 
 ```ts
@@ -276,12 +318,21 @@ const content = data.choices[0]?.message?.content ?? '';
 
 逐层可选链，缺字段时回落为空串——**任何一层缺失都不会抛错**。
 
-### 步骤 6：渲染事件并追加 assistant
+### 步骤 7：渲染事件并追加 assistant
 
 正文由**渲染器**（`src/cli/render.ts`）逐块写到 stdout：第一个 `text-delta` 到达时
 先写 `AI: ` 前缀，之后每来一块正文就接着写，**不补换行**（换行统一由收尾负责）。
 另外 `done` 分支有个**兜底**：整轮一个字都没产出（比如空回答）时也补上前缀 ——
 空回答在流式与非流式两条路径下的形状必须一致（见 `test/render.test.ts`）。
+
+**思考过程**（`reasoning-delta`）按 `--show-reasoning` 分两种呈现，**都走 stderr**：
+
+| 模式 | stderr 上的形状 |
+| --- | --- |
+| 默认 | 首个 delta 时一行 `[思考中…]`，正文不打印 |
+| `--show-reasoning` | `[思考] ` 前缀 + 思考全文（前缀只在真有内容时写） |
+
+两条流都不把思考放进 stdout：那样 `pnpm start > answers.txt` 拿到的就不只是回答了（D-M4a-6）。
 
 ```ts
 for await (const event of stream) {

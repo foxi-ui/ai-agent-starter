@@ -33,12 +33,27 @@ export interface StreamRenderer {
  */
 const ANSWER_PREFIX = 'AI: ';
 
+/**
+ * 展开思考时，写在思考全文之前的前缀（stderr）。
+ *
+ * 同样**只在真有内容时**才写，所以服务端没吐 reasoning 时不会留下一个孤零零的前缀。
+ */
+const REASONING_PREFIX = '[思考] ';
+
 export function createStreamRenderer(options: {
   output: NodeJS.WritableStream;
   errorOutput: NodeJS.WritableStream;
+  /**
+   * 展开思考全文（`--show-reasoning`）。为 false 时维持 D22 的一行 `[思考中…]` 指示。
+   *
+   * 无论哪种模式，思考都走 **stderr** —— stdout 的契约是「只有模型回答与命令结果」，
+   * `pnpm start > answers.txt` 必须拿到一份干净的答案文件（见 D-M4a-6）。
+   */
+  showReasoning: boolean;
 }): StreamRenderer {
   // 每轮一个新的渲染器，所以这些标志天然是「本轮」的，不需要跨轮重置
   let thinkingNotified = false;
+  let wroteReasoningPrefix = false;
   let wrotePrefix = false;
   let finished = false;
 
@@ -52,9 +67,20 @@ export function createStreamRenderer(options: {
   return {
     onEvent(event: StreamEvent): void {
       if (event.type === 'reasoning-delta') {
-        // 思考可能持续十几秒。这期间若一片死寂，流式解决的「等待没反馈」
+        if (options.showReasoning) {
+          // 展开全文。前缀只写一次，正文紧随其后（不换行），
+          // 由 finish() 统一补末尾那个换行 —— 与 stdout 的正文同一个形状。
+          if (!wroteReasoningPrefix) {
+            wroteReasoningPrefix = true;
+            options.errorOutput.write(REASONING_PREFIX);
+          }
+          options.errorOutput.write(event.text);
+          return;
+        }
+
+        // 默认模式：思考可能持续十几秒。这期间若一片死寂，流式解决的「等待没反馈」
         // 就只解决了一半 —— 所以给一行指示，但**不打印思考内容本身**
-        // （它通常比答案长得多，会淹没答案；展开全文是 M4 的 --show-reasoning）。
+        // （它通常比答案长得多，会淹没答案）。
         if (!thinkingNotified) {
           thinkingNotified = true;
           options.errorOutput.write('[思考中…]\n');
@@ -83,6 +109,9 @@ export function createStreamRenderer(options: {
       // 幂等：无论调用几次，只补一个换行
       if (finished) return;
       finished = true;
+      // 展开的思考在 stderr 上是一条独立的行，也和正文一样需要收尾 ——
+      // 否则下一次的 [思考] 或报错会粘在思考的最后一句后面
+      if (wroteReasoningPrefix) options.errorOutput.write('\n');
       // 前缀都没写过说明本轮完全没产出（比如一上来就抛错），
       // 此时当前行是空的，补换行只会多一个空行
       if (wrotePrefix) options.output.write('\n');

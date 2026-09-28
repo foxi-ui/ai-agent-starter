@@ -18,12 +18,13 @@ function collector(): { chunks: string[]; stream: Writable } {
   return { chunks, stream };
 }
 
-function setup() {
+function setup(showReasoning = false) {
   const out = collector();
   const err = collector();
   const renderer = createStreamRenderer({
     output: out.stream,
     errorOutput: err.stream,
+    showReasoning,
   });
   return { out, err, renderer };
 }
@@ -123,6 +124,68 @@ test('已输出正文但流中途失败：finish 仍补换行', () => {
   renderer.finish();
 
   assert.equal(out.chunks.join(''), 'AI: 半截\n');
+});
+
+// ── M4a：--show-reasoning 展开思考全文 ────────────────────────────────
+//
+// 两种模式都走 stderr：stdout 的契约是「只有模型回答与命令结果」，
+// `pnpm start > answers.txt` 必须拿到干净的答案文件（见 D-M4a-6）。
+
+test('展开思考时全文写 stderr，stdout 一个字的思考都没有', () => {
+  const { out, err, renderer } = setup(true);
+  renderer.onEvent({ type: 'reasoning-delta', text: '先想' });
+  renderer.onEvent({ type: 'reasoning-delta', text: '再想' });
+  renderer.onEvent({ type: 'text-delta', text: '答案' });
+  renderer.finish();
+
+  // 前缀只写一次，正文紧随其后，末尾由 finish 补一个换行
+  assert.equal(err.chunks.join(''), '[思考] 先想再想\n');
+  // 关键断言：stdout 里没有「想」字
+  assert.equal(out.chunks.join(''), 'AI: 答案\n');
+  assert.ok(!out.chunks.join('').includes('想'), '思考文字泄漏到了 stdout');
+});
+
+test('展开思考时只补一个换行（finish 调两次也一样）', () => {
+  const { err, renderer } = setup(true);
+  renderer.onEvent({ type: 'reasoning-delta', text: '想' });
+  renderer.finish();
+  renderer.finish();
+
+  assert.equal(err.chunks.join(''), '[思考] 想\n');
+});
+
+test('无 reasoning 时两种模式都不写任何前缀', () => {
+  // 服务端忽略了 thinking 参数时就是这种情况：不能留下一个孤零零的 `[思考] `
+  for (const showReasoning of [false, true]) {
+    const { out, err, renderer } = setup(showReasoning);
+    renderer.onEvent({ type: 'text-delta', text: '答' });
+    renderer.onEvent({ type: 'done', reason: 'stop' });
+    renderer.finish();
+
+    assert.deepEqual(err.chunks, [], `showReasoning=${showReasoning}`);
+    assert.equal(out.chunks.join(''), 'AI: 答\n', `showReasoning=${showReasoning}`);
+  }
+});
+
+test('有思考但整轮没有正文时，stdout 仍补 AI: 前缀', () => {
+  // 前缀的写出与思考无关：这两条流互不影响
+  const { out, err, renderer } = setup(true);
+  renderer.onEvent({ type: 'reasoning-delta', text: '想' });
+  renderer.onEvent({ type: 'done', reason: 'stop' });
+  renderer.finish();
+
+  assert.equal(err.chunks.join(''), '[思考] 想\n');
+  assert.equal(out.chunks.join(''), 'AI: \n');
+});
+
+test('默认模式下思考全文不出现（只留一行指示）', () => {
+  // 与上面第一条对照：同一条事件流，开关不同，stderr 的形状完全不同
+  const { err, renderer } = setup(false);
+  renderer.onEvent({ type: 'reasoning-delta', text: '先想' });
+  renderer.onEvent({ type: 'reasoning-delta', text: '再想' });
+  renderer.finish();
+
+  assert.equal(err.chunks.join(''), '[思考中…]\n');
 });
 
 test('renderCommandResult /clear 反馈条数', () => {

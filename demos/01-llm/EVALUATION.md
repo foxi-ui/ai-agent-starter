@@ -9,7 +9,7 @@
 ```text
 TypeCheck: PASS  (tsc --noEmit 退出码 0)
 Lint:      N/A   (本仓库未配置 linter)
-Test:      PASS  (node --test 167/167，退出码 0)
+Test:      PASS  (node --test 206/206，退出码 0)
 Build:     N/A   (noEmit，Node 直接运行 .ts，无构建产物)
 ```
 
@@ -42,6 +42,15 @@ M1 自身的交付目标 —— **非流式多轮对话 + 最小错误处理** �
 - 离线：`test/session.test.ts`（6 例）断言按序保存与 `system` 在最前；
   `test/repl.test.ts`「多轮对话上下文按序累积」断言第二轮**实际发出的 messages 数组形状**
 - 真实网络：第二轮问「用一句话总结刚才的内容」，回答正确复述了第一轮的 React Server Components 主题
+- **上下文预算裁剪（M4a）**：`src/core/context.ts` 的 `fitToBudget` 在超预算时从最老的
+  **整轮**开始丢，`system` 与当前问题永不裁；裁剪**只影响本次请求**，会话与磁盘仍是完整历史
+  （D43）。离线：`test/context.test.ts`（估算公式、分组的两处边界、永不裁的两条规则、
+  单条超预算不裁），以及 `test/repl.test.ts`「maxContext 生效：发给模型的是裁过的，
+  落盘的仍是完整历史」——后者才测得到接线有没有接错。
+- **真实网络（2026-09-28）**：`--max-context 30` 跑六轮「只回答数字」的问答，
+  stderr 从第二轮起逐轮出现 `[上下文] 已裁剪 2 / 4 / 6 / 8 / 10 条最早的消息`；
+  会话文件仍是 **meta + 12 条 message = 13 行**的完整历史；最后一问答对（6+6 → 12），
+  说明当前问题确实没被裁掉。这一次同时验证了裁剪生效、警告只一行、以及**不回写会话**。
 
 ### 3. 处理 API 错误（M1 最小实现，部分达标）
 
@@ -74,7 +83,17 @@ M1 自身的交付目标 —— **非流式多轮对话 + 最小错误处理** �
   后接一个**无换行**的 `You: ` 提示符；stderr **恰好**一行 `[思考中…]`；stdout 不出现思考文字。
   这一次同时验证了分流、`AI: ` 前缀与 D15 的输出形状
 
-**未做（属 M4）**：`--show-reasoning` 展开思考全文、`--no-thinking`
+**已做（M4a）**：`--show-reasoning` 展开思考全文、`--no-thinking` 关闭 thinking。
+两者都只改**渲染策略与请求体**，不动 `llm/` 层的事件归一化 ——
+`reasoning-delta` 从 M2a 起就一直在吐（D18 / D22）。
+- 离线：`test/render.test.ts`（展开全文、无 reasoning 时不写前缀、stdout 绝不含思考文字）、
+  `test/deepseek.test.ts`（`thinking:false` 才带 `disabled` 字段，两个方法都覆盖）、
+  `test/repl.test.ts`（开关透传进 `ChatOptions`）
+- **真实网络（2026-09-28）**：`--show-reasoning` 下 stderr 出现 `[思考] The user asks in
+  Chinese: …` 全文，而 stdout 只有 `You: AI: <回答>`；`--no-thinking` 下 stderr
+  **连 `[思考中…]` 都没有**（只有 `[session]` 一行），确认 thinking 真的被关掉了。
+  冲突组合 `--no-thinking --show-reasoning` 与非法 `--max-context` 都是 stderr 一行
+  错误 + 一行用法，退出码 1
 
 ### 5. 使用 Structured Output（未做，落点 M5）
 
@@ -127,6 +146,10 @@ M1 自身的交付目标 —— **非流式多轮对话 + 最小错误处理** �
 | 落盘接线与降级：一轮两条记录、`/clear` `/model` 也落盘、写盘失败只警告一次且对话继续 | `test/repl.test.ts`（记录型假 store） |
 | `/sessions` 列表渲染：`*` 标记、时间列就地切片、空表提示 | `test/render.test.ts` |
 | 启动分支：退出码 1 的四种情况、新会话落盘恰一行 meta、resume **不改动日志长度**、坏行警告、模型回落 | `test/index.test.ts`（子进程集成测试） |
+| 上下文估算与裁剪：除数方向、按整轮分组、`system`/最后一组永不裁、单条超预算不裁、失败轮次与开头残余的分组 | `test/context.test.ts`（纯函数） |
+| 三个开关的参数解析：互斥、`--max-context` 的八种非法输入、顺序无关、布尔幂等、`--resume` 重复给报错 | `test/args.test.ts`（纯函数） |
+| 思考的两种渲染模式与流向（stdout 绝不含思考文字）；请求体的 `thinking` 只在关闭时出现 | `test/render.test.ts`、`test/deepseek.test.ts` |
+| 裁剪接线：发给 client 的被裁、落盘的是完整历史、警告恰一行；三个开关透传 | `test/repl.test.ts`（记录型假 client / 假 store） |
 
 ```bash
 pnpm test
@@ -142,7 +165,8 @@ pnpm test
 ## 相关决策
 
 `DECISIONS.md` D1（手写 fetch 而非 SDK）、D5（不做自动重试）、D7（失败轮次不写 assistant）、
-D13（错误走 stderr）、D21（流空闲超时）、D26（命令结果走 stdout）
+D13（错误走 stderr）、D21（流空闲超时）、D26（命令结果走 stdout）、
+D39（估算除数取 1.5）、D43（裁剪不回写会话）、D44（思考走 stderr）、D49（`thinking` 是 boolean）
 
 ## 维护方式
 

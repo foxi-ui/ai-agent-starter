@@ -229,6 +229,71 @@ test('chatStream 的 options.model 覆盖默认模型', async () => {
   assert.equal(JSON.parse(String(capturedInit!.body)).model, 'deepseek-v4-pro');
 });
 
+// ── M4a：--no-thinking 的请求体翻译 ────────────────────────────────────
+//
+// 契约是「**多一个字段**」而不是「字段值不同」：只在关闭时才产生 `thinking` 键。
+// 显式声明默认值（enabled）只是徒增一个可能与服务端漂移的分支。
+//
+// 两个方法都要测 —— 只覆盖 chatStream 的话，chat() 那边漏掉翻译也测不出来。
+
+test('chat 不传 thinking 时，请求体里连这个键都没有', async () => {
+  let capturedInit: Parameters<typeof fetch>[1] | undefined;
+  mockFetch(async (_url, init) => {
+    capturedInit = init;
+    return jsonResponse({ choices: [{ message: { content: '答' } }] });
+  });
+
+  await createDeepSeekClient(config).chat([{ role: 'user', content: 'hi' }]);
+
+  assert.equal('thinking' in JSON.parse(String(capturedInit!.body)), false);
+});
+
+test('chat 传 thinking: true 时同样不带这个键', async () => {
+  let capturedInit: Parameters<typeof fetch>[1] | undefined;
+  mockFetch(async (_url, init) => {
+    capturedInit = init;
+    return jsonResponse({ choices: [{ message: { content: '答' } }] });
+  });
+
+  await createDeepSeekClient(config).chat([{ role: 'user', content: 'hi' }], {
+    thinking: true,
+  });
+
+  // 服务端默认就是开启，所以「显式打开」与「不传」必须是同一个请求体
+  assert.equal('thinking' in JSON.parse(String(capturedInit!.body)), false);
+});
+
+test('chat 传 thinking: false 时请求体带 disabled', async () => {
+  let capturedInit: Parameters<typeof fetch>[1] | undefined;
+  mockFetch(async (_url, init) => {
+    capturedInit = init;
+    return jsonResponse({ choices: [{ message: { content: '答' } }] });
+  });
+
+  await createDeepSeekClient(config).chat([{ role: 'user', content: 'hi' }], {
+    thinking: false,
+  });
+
+  assert.deepEqual(JSON.parse(String(capturedInit!.body)).thinking, { type: 'disabled' });
+});
+
+test('chatStream 不带 thinking，且 chatStream 传 false 时带 disabled', async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  mockFetch(async (_url, init) => {
+    bodies.push(JSON.parse(String(init!.body)));
+    return sseResponse([enc.encode('data: [DONE]\n\n')]);
+  });
+
+  const client = createDeepSeekClient(config);
+  await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  await collect(client.chatStream([{ role: 'user', content: 'hi' }], { thinking: false }));
+
+  assert.equal('thinking' in bodies[0], false);
+  assert.deepEqual(bodies[1].thinking, { type: 'disabled' });
+  // 其余字段不受影响
+  assert.equal(bodies[1].stream, true);
+});
+
 test('chatStream 把 delta 归一化成事件序列', async () => {
   mockFetch(async () =>
     sseResponse([

@@ -10,9 +10,10 @@ CLI 模式下的 AI 对话工具，**不使用 LangChain，直接调用 DeepSeek
 LLM API → 消息结构 → 上下文管理 → Streaming → 错误处理 → Token 统计
 ```
 
-> **当前范围：仅「对话部分」**——多轮对话（非流式 + **流式 SSE**）+ 最小错误处理
-> + **会话持久化**（JSONL 落盘、`--resume`、`/sessions`）。
-> 蓝图中尚未落地的项（token 统计、structured output、上下文裁剪等）见 [`EVALUATION.md`](EVALUATION.md)。
+> **当前范围**：多轮对话（非流式 + **流式 SSE**）+ 最小错误处理 + **会话持久化**
+> （JSONL 落盘、`--resume`、`/sessions`）+ **上下文预算裁剪与三个启动开关**（M4a）。
+> 蓝图中尚未落地的项（token 统计与成本账本、`/usage`、structured output 等）见
+> [`EVALUATION.md`](EVALUATION.md)。
 
 ## 环境要求
 
@@ -102,8 +103,13 @@ AI: ...
 | --- | --- |
 | `pnpm start` | 启动 REPL（新会话） |
 | `pnpm start --resume <id>` | 恢复指定会话，接着上次聊 |
-| `pnpm test` | 运行全部测试（`node --test`，当前 167 个用例） |
+| `pnpm start --show-reasoning` | 展开思考全文到 **stderr**（默认只给一行 `[思考中…]`） |
+| `pnpm start --no-thinking` | 关闭 thinking，对比延迟与输出 |
+| `pnpm start --max-context <n>` | 上下文软预算（token），默认 `64000` |
+| `pnpm test` | 运行全部测试（`node --test`，当前 206 个用例） |
 | `pnpm run typecheck` | 类型检查（`tsc --noEmit`） |
+
+三个开关顺序无关，可与 `--resume` 任意组合（`pnpm start --resume <id> --no-thinking`）。
 
 命令的事实来源是 `package.json` 的 `scripts` 字段。
 
@@ -137,6 +143,30 @@ pnpm start --resume 20260924-224330-a3f1
 - 写盘失败（只读目录、磁盘满）不会中断对话：内存照常走，stderr 给**一行**警告。
 - 会话目录默认是**当前工作目录**下的 `.sessions/`，可用 `AI_CHAT_HOME` 覆盖。
 
+### 三个开关：`--show-reasoning` / `--no-thinking` / `--max-context`
+
+它们都是**本次启动的偏好**，不是会话状态 —— 不进对话上下文，也不落盘。
+
+**`--show-reasoning`** 展开思考全文。思考始终走 **stderr**（与 `[思考中…]` 同一条流），
+所以 `pnpm start --show-reasoning > answers.txt` 拿到的文件里**仍然只有回答**。
+模型没吐思考时不输出任何前缀，不会留下孤零零的 `[思考] `。
+
+**`--no-thinking`** 请求体带 `thinking: { type: 'disabled' }`。不传这个开关时请求体里
+连 `thinking` 键都没有（服务端默认开启）。它与 `--show-reasoning` **互斥**：关了 thinking
+就没有思考可显示，同时给会报错并以退出码 1 退出 —— 静默接受的话，你会以为
+「模型这次没思考」，而事实是它思考了、只是被自己关掉了。
+
+**`--max-context <n>`** 上下文软预算（token）。超出时从**最老的整轮**开始丢，
+`system` 与当前问题永不裁。默认 `64000` 在 1M 上下文下几乎不会触发，
+把它调小（例如 `--max-context 200`）就能真实看到裁剪发生 —— stderr 会给一行：
+
+```text
+[上下文] 已裁剪 4 条最早的消息（约 1180 token）
+```
+
+**裁剪只影响这一次请求**：会话内存与 `.sessions/*.jsonl` 里始终是完整历史，
+`--resume` 回来一个字都不少。
+
 ## REPL 命令
 
 | 命令 | 作用 |
@@ -167,19 +197,21 @@ pnpm start --resume 20260924-224330-a3f1
   src/
     index.ts            # 入口：解析配置与参数 → 新建/恢复会话 → 启动 REPL
     cli/config.ts       # 环境变量 → Config
-    cli/args.ts         # 命令行参数解析（--resume），纯函数、非法即抛错
+    cli/args.ts         # 命令行参数解析（--resume 与三个开关），纯函数、非法即抛错
     cli/store.ts        # SessionStore 的文件实现 —— 唯一读写会话日志、唯一碰 node:fs 的地方
     cli/repl.ts         # readline 主循环 + 打印 + 变更落盘（onChange）
     cli/render.ts       # StreamEvent / CommandResult → stdout/stderr
     core/types.ts       # Message / Role / ChatResult / StreamEvent / ChatOptions 类型
     core/journal.ts     # 会话日志：记录类型、序列化/解析、回放、id 生成与校验（纯逻辑，不碰 fs）
     core/session.ts     # 会话：消息数组、append、toMessages、变更广播（onChange）
+    core/context.ts     # 上下文预算：estimateTokens 估算、fitToBudget 按轮裁剪（纯函数）
     core/commands.ts    # 命令解析（parseCommand）与执行（executeCommand → CommandResult）
     llm/client.ts       # LLMClient 接口（测试替身的接缝）
     llm/deepseek.ts     # DeepSeek adapter：非流式 + 流式调用、响应解析
     llm/sse.ts          # SSE 分帧（纯函数）
   test/
     session.test.ts     # 消息累积、history 副本、变更广播（onChange）
+    context.test.ts     # 上下文估算与裁剪（纯函数：分组、永不裁的两条规则、各类边界）
     deepseek.test.ts
     sse.test.ts         # SSE 分帧（纯函数）
     render.test.ts      # StreamEvent / CommandResult → stdout/stderr
@@ -189,7 +221,7 @@ pnpm start --resume 20260924-224330-a3f1
     commands.test.ts    # 命令解析与执行（纯函数，无需捕获输出）
     journal.test.ts     # 日志格式、解析、回放、id 生成与校验（纯函数）
     store.test.ts       # 会话存储的文件实现（真临时目录，不 mock fs）
-    args.test.ts        # --resume 的参数解析（纯函数）
+    args.test.ts        # --resume 与三个开关的参数解析（纯函数）
 ```
 
 ## 当前能力边界
@@ -198,7 +230,11 @@ pnpm start --resume 20260924-224330-a3f1
 
 - 非流式多轮对话 + **流式（SSE）逐字输出**，上下文在进程内存中累积
 - REPL 命令：`/clear` `/history` `/model` `/sessions`
-- 思考过程默认不展开，仅在 stderr 给一行 `[思考中…]` 指示
+- **上下文预算裁剪**（`core/context.ts`）：按整轮从最老的丢起，`system` 与当前问题
+  永不裁；阈值由 `--max-context` 控制。**裁剪只影响本次请求**，会话与磁盘始终完整。
+  自动化测试见 `test/context.test.ts`，接线（发出的被裁 / 落盘的完整）见 `test/repl.test.ts`
+- 思考过程默认不展开，仅在 stderr 给一行 `[思考中…]` 指示；
+  `--show-reasoning` 展开全文（仍在 stderr）、`--no-thinking` 关闭 thinking
 - `system` / `user` / `assistant` 三种 role 的消息组装
 - 最小错误处理：API 报错打印到 **stderr** 后继续循环，不崩溃、不污染上下文；
   模型回答**与命令结果**走 stdout，两条流互不干扰
@@ -209,9 +245,10 @@ pnpm start --resume 20260924-224330-a3f1
 
 **尚未实现（后续增量）**
 
-- 命令：`/usage`（Token 统计尚未实现，属 M4）
-- token 统计 / 成本账本、上下文预算裁剪
-- 错误分类与自动重试、`--timeout`、`-p` 一次性模式
+- 命令：`/usage`（Token 统计尚未实现，属 M4b）
+- token 统计 / 成本账本（属 M4b）
+- structured output（`response_format`，属 M5）
+- 错误分类与自动重试、`--timeout`、中断回滚、`-p` 一次性模式（属 M6）
 
 ## 文档
 

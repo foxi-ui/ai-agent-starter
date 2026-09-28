@@ -5,12 +5,20 @@
 // 「把错误信息写出去 + 设退出码」由 src/index.ts 负责，那部分在 index.test.ts 里测。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseArgs } from '@/cli/args.ts';
+import { parseArgs, DEFAULT_MAX_CONTEXT } from '@/cli/args.ts';
 
-/** spec §9 规定：**所有**抛错消息都要附这一行用法 */
-const USAGE_PATTERN = /用法：pnpm start \[--resume <会话 id>\]/;
+/** spec §7 规定：**所有**抛错消息都要附这一行用法（整行钉死，不是只匹配开头） */
+const USAGE_PATTERN =
+  /用法：pnpm start \[--resume <会话 id>\] \[--show-reasoning\] \[--no-thinking\] \[--max-context <n>\]$/;
 
 const VALID_ID = '20260924-143022-a3f1';
+
+/** 三个开关的默认值：全关，预算取默认。用它来写「其余不变」那部分期望值 */
+const DEFAULTS = {
+  showReasoning: false,
+  noThinking: false,
+  maxContext: DEFAULT_MAX_CONTEXT,
+};
 
 /** 跑一次解析并返回错误消息；没抛错就是用例失败 */
 function expectThrow(argv: string[]): string {
@@ -22,12 +30,17 @@ function expectThrow(argv: string[]): string {
   assert.fail(`parseArgs(${JSON.stringify(argv)}) 应当抛错，但它正常返回了`);
 }
 
-test('无参数即开新会话', () => {
-  assert.deepEqual(parseArgs([]), { kind: 'fresh' });
+test('无参数即开新会话，三个开关取默认值', () => {
+  assert.deepEqual(parseArgs([]), { kind: 'fresh', ...DEFAULTS });
+  assert.equal(DEFAULT_MAX_CONTEXT, 64_000);
 });
 
 test('--resume 加合法 id 解析成恢复会话', () => {
-  assert.deepEqual(parseArgs(['--resume', VALID_ID]), { kind: 'resume', id: VALID_ID });
+  assert.deepEqual(parseArgs(['--resume', VALID_ID]), {
+    kind: 'resume',
+    id: VALID_ID,
+    ...DEFAULTS,
+  });
 });
 
 test('任何非法输入都抛错，且消息里同时有**具体错因**和用法行', () => {
@@ -92,4 +105,95 @@ test('抛出的确实是 Error，消息不含用法行之外的杂质', () => {
   assert.ok(caught instanceof Error, '应当抛 Error 实例');
   const message = (caught as Error).message;
   assert.equal(message, message.trim(), `消息首尾不该有空白：${JSON.stringify(message)}`);
+});
+
+// ── M4a：三个开关 ──────────────────────────────────────────────────────
+
+test('--show-reasoning 与 --no-thinking 各自打开对应开关', () => {
+  assert.deepEqual(parseArgs(['--show-reasoning']), {
+    kind: 'fresh',
+    ...DEFAULTS,
+    showReasoning: true,
+  });
+  assert.deepEqual(parseArgs(['--no-thinking']), {
+    kind: 'fresh',
+    ...DEFAULTS,
+    noThinking: true,
+  });
+});
+
+test('--max-context 覆盖默认预算', () => {
+  assert.equal(parseArgs(['--max-context', '400']).maxContext, 400);
+  // 下界：1 是合法的 —— 存在的意义就是能调到极小以便观察裁剪
+  assert.equal(parseArgs(['--max-context', '1']).maxContext, 1);
+});
+
+test('三个开关与 --resume 任意顺序共存', () => {
+  const expected = {
+    kind: 'resume',
+    id: VALID_ID,
+    showReasoning: true,
+    noThinking: false,
+    maxContext: 400,
+  };
+  assert.deepEqual(parseArgs(['--resume', VALID_ID, '--show-reasoning', '--max-context', '400']), expected);
+  assert.deepEqual(parseArgs(['--max-context', '400', '--show-reasoning', '--resume', VALID_ID]), expected);
+  assert.deepEqual(parseArgs(['--show-reasoning', '--resume', VALID_ID, '--max-context', '400']), expected);
+});
+
+test('布尔开关重复给是幂等的', () => {
+  assert.deepEqual(parseArgs(['--no-thinking', '--no-thinking']), {
+    kind: 'fresh',
+    ...DEFAULTS,
+    noThinking: true,
+  });
+});
+
+test('--no-thinking 与 --show-reasoning 同时给要报错', () => {
+  // 关了 thinking 服务端就不会吐 reasoning，--show-reasoning 于是什么都不显示。
+  // 静默接受的话，用户会以为「模型这次没思考」—— 而事实是它思考了、被自己关掉了。
+  for (const argv of [
+    ['--no-thinking', '--show-reasoning'],
+    ['--show-reasoning', '--no-thinking'],
+  ]) {
+    const message = expectThrow(argv);
+    assert.match(message, /--no-thinking 与 --show-reasoning 不能同时使用/);
+    assert.match(message, USAGE_PATTERN);
+  }
+});
+
+test('--max-context 的各类非法输入都报错，且带出收到的值', () => {
+  const cases: Array<[string[], RegExp]> = [
+    // 缺值
+    [['--max-context'], /--max-context 需要一个正整数/],
+    // 非数字
+    [['--max-context', 'abc'], /收到：abc/],
+    // 小数（正则里的 \d+ 挡掉小数点）
+    [['--max-context', '1.5'], /收到：1\.5/],
+    // 负数
+    [['--max-context', '-1'], /收到：-1/],
+    // 0 通不过 `> 0` 那道
+    [['--max-context', '0'], /收到：0/],
+    // 空串：一个数字都没有
+    [['--max-context', ''], /--max-context 需要一个正整数/],
+    // 超出安全整数范围
+    [['--max-context', '999999999999999999999'], /收到：999999999999999999999/],
+    // 后面跟的是另一个开关而不是数字 —— 把收到的值报出来，
+    // 用户才看得出「我少写了一个参数」而不是「这个开关坏了」
+    [['--max-context', '--no-thinking'], /收到：--no-thinking/],
+  ];
+
+  for (const [argv, reason] of cases) {
+    const message = expectThrow(argv);
+    assert.match(message, reason, `parseArgs(${JSON.stringify(argv)}) 的错因不对：${message}`);
+    assert.match(message, USAGE_PATTERN, `缺少用法行：${message}`);
+  }
+});
+
+test('--resume 重复给是报错而不是后者覆盖前者', () => {
+  // 与布尔开关相反：它带值，重复给有歧义（到底续哪个？）。
+  // 让后者静默胜出，就等于悄悄忽略了前一个 —— 同样是「静默地没做用户要的事」。
+  const message = expectThrow(['--resume', VALID_ID, '--resume', VALID_ID]);
+  assert.match(message, /参数过多：--resume/);
+  assert.match(message, USAGE_PATTERN);
 });
