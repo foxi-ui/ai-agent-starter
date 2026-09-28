@@ -157,8 +157,12 @@ test('字段缺失或类型不符的记录返回 null', () => {
 test('不认识的 type 返回 null —— 这是格式的前向兼容位', () => {
   // 将来真加了新记录类型，旧版本程序读到它应当**跳过**而不是崩。
   // 这条用例把「未知即跳过」钉成有意行为，免得被当成漏判而改成抛错。
-  assert.equal(parseRecord('{"type":"usage","promptTokens":10}'), null);
   assert.equal(parseRecord('{"foo":"bar"}'), null);
+  // 注意：`usage` 从 M4b 起是**已知**类型了，所以下面这条走的不再是
+  // 「未知 type」那条路，而是 `entry` 缺失被逐字段校验拒掉（Task 7）。
+  // 结果同样是 null，但理由完全不同 —— 换个真正未知的名字来钉本用例的本意。
+  assert.equal(parseRecord('{"type":"future-thing","x":1}'), null);
+  assert.equal(parseRecord('{"type":"usage","promptTokens":10}'), null);
 });
 
 test('replay：meta 定初始模型，message 按序累积', () => {
@@ -174,6 +178,7 @@ test('replay：meta 定初始模型，message 按序累积', () => {
       { role: 'assistant', content: '第一答' },
     ],
     model: 'deepseek-flash',
+    usageEntries: [],
   });
 });
 
@@ -210,7 +215,7 @@ test('replay：clear 清空消息，但**不清模型**', () => {
     { type: 'clear' },
   ]);
 
-  assert.deepEqual(result, { messages: [], model: 'deepseek-flash' });
+  assert.deepEqual(result, { messages: [], model: 'deepseek-flash', usageEntries: [] });
 });
 
 test('replay：clear 只影响它之前的消息，之后的消息照常累积', () => {
@@ -242,6 +247,7 @@ test('replay：meta / model / message / clear 交错时按顺序折叠', () => {
   assert.deepEqual(result, {
     messages: [{ role: 'user', content: '3' }],
     model: 'C',
+    usageEntries: [],
   });
 });
 
@@ -249,7 +255,7 @@ test('replay：空记录数组给出空会话与 null 模型', () => {
   // model 为 null 表示「文件里既没有 meta 也没有 model 记录」，
   // 由调用方回落到环境变量里的模型（见 src/index.ts）。
   // 0 字节的空文件走的就是这条路径。
-  assert.deepEqual(replay([]), { messages: [], model: null });
+  assert.deepEqual(replay([]), { messages: [], model: null, usageEntries: [] });
 });
 
 test('makeSessionId：用本地时间分量，不是 UTC', () => {
@@ -324,4 +330,84 @@ test('isValidSessionId 只放行 YYYYMMDD-HHMMSS-xxxx 形状', () => {
   for (const [id, expected] of cases) {
     assert.equal(isValidSessionId(id), expected, `isValidSessionId(${JSON.stringify(id)})`);
   }
+});
+
+// ── usage 记录（M4b） ─────────────────────────────────────────────────
+
+/** 一份合法的 usage 记录载荷 */
+const usageEntry = {
+  at: '2026-09-28T02:00:00.000Z',
+  model: 'deepseek-flash',
+  usage: {
+    promptTokens: 1203,
+    completionTokens: 456,
+    totalTokens: 1659,
+    cachedTokens: 1024,
+    cacheMissTokens: 179,
+    reasoningTokens: 120,
+  },
+  estimatedPromptTokens: 1180,
+};
+
+test('usage 记录的两向格式契约', () => {
+  const record = { type: 'usage' as const, entry: usageEntry };
+  const line = serializeRecord(record);
+  assert.deepEqual(parseRecord(line), record);
+});
+
+test('usage 记录缺字段时当坏行跳过', () => {
+  // 文件内容不可信（可能被手改），每个字段都要校验
+  const bad = [
+    { type: 'usage' },                                        // 缺 entry
+    { type: 'usage', entry: { ...usageEntry, at: 1 } },       // at 不是 string
+    { type: 'usage', entry: { ...usageEntry, model: null } }, // model 不是 string
+    { type: 'usage', entry: { ...usageEntry, estimatedPromptTokens: 'x' } },
+    { type: 'usage', entry: { ...usageEntry, usage: 'nope' } },
+    {
+      type: 'usage',
+      entry: { ...usageEntry, usage: { ...usageEntry.usage, promptTokens: 'x' } },
+    },
+    {
+      type: 'usage',
+      entry: { ...usageEntry, usage: { ...usageEntry.usage, reasoningTokens: undefined } },
+    },
+  ];
+  for (const record of bad) {
+    assert.equal(parseRecord(JSON.stringify(record)), null, `${JSON.stringify(record)} 应被拒`);
+  }
+});
+
+test('replay 折叠出 usageEntries', () => {
+  const records: SessionRecord[] = [
+    { type: 'meta', id: '20260928-100000-abcd', createdAt: 'x', model: 'deepseek-flash' },
+    { type: 'message', role: 'user', content: '你好' },
+    { type: 'usage', entry: usageEntry },
+    { type: 'message', role: 'assistant', content: '你也好' },
+  ];
+  const replayed = replay(records);
+  assert.equal(replayed.messages.length, 2);
+  assert.deepEqual(replayed.usageEntries, [usageEntry]);
+});
+
+test('clear 清消息但**不清**账本', () => {
+  // 这条最容易被后人「顺手一起清掉」。账本记的是「这个会话文件累计花了多少」，
+  // 钱已经花掉了，/clear 清的是对话内容（D-M4b-15）
+  const records: SessionRecord[] = [
+    { type: 'meta', id: 'id', createdAt: 'x', model: 'm' },
+    { type: 'message', role: 'user', content: 'a' },
+    { type: 'usage', entry: usageEntry },
+    { type: 'clear' },
+    { type: 'message', role: 'user', content: 'b' },
+  ];
+  const replayed = replay(records);
+  assert.equal(replayed.messages.length, 1);       // 只剩 clear 之后那条
+  assert.deepEqual(replayed.usageEntries, [usageEntry]); // 账本原封不动
+});
+
+test('旧文件（没有 usage 行）回放出空账本', () => {
+  const replayed = replay([
+    { type: 'meta', id: 'id', createdAt: 'x', model: 'm' },
+    { type: 'message', role: 'user', content: 'a' },
+  ]);
+  assert.deepEqual(replayed.usageEntries, []);
 });
