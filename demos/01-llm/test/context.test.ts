@@ -210,3 +210,33 @@ test('开头不以 user 起始的残余单独成一组，最先被丢', () => {
   assert.equal(fitted.messages[1].role, 'user');
   assert.equal(fitted.messages.length, 4);
 });
+
+// ── keptTokens（M4b 校准用） ──────────────────────────────────────────
+
+test('未超预算时 keptTokens 等于全部估算', () => {
+  const messages = [system(), turn('user')]; // 10 + 4 = 14
+  const fitted = fitToBudget(messages, 100);
+  assert.equal(fitted.keptTokens, 14);
+});
+
+test('裁剪后 keptTokens 等于 total 减 droppedTokens', () => {
+  // 三个完整轮：10 + (4+4) × 3 = 34。预算 20 → 丢掉最老的两轮（16）
+  const messages = [
+    system(),
+    turn('user'), turn('assistant'),
+    turn('user'), turn('assistant'),
+    turn('user'), turn('assistant'),
+  ];
+  const fitted = fitToBudget(messages, 20);
+
+  assert.equal(fitted.droppedTokens, 16);
+  assert.equal(fitted.keptTokens, 34 - 16);
+});
+
+test('单条消息自超预算、一组都没丢时，keptTokens 仍是全部估算', () => {
+  // 预算再小也裁不动最后一组，此时 dropped 为 0、keptTokens 应是 14
+  const messages = [system(), turn('user')];
+  const fitted = fitToBudget(messages, 1);
+  assert.equal(fitted.dropped, 0);
+  assert.equal(fitted.keptTokens, 14);
+});

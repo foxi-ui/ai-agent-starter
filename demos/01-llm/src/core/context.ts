@@ -48,6 +48,13 @@ export interface FittedContext {
   dropped: number;
   /** 被丢掉的那些消息的估算 token 数；未裁剪时为 0 */
   droppedTokens: number;
+  /**
+   * 保留下来的消息的估算 token 数。
+   *
+   * 供 M4b 的校准用：它要和 API 返回的真实 `prompt_tokens` 比，而后者
+   * 描述的是「这一次实际发出去的东西」—— 所以这里也必须是**裁剪后**的估算。
+   */
+  keptTokens: number;
 }
 
 /** 一轮在 `messages` 里的下标区间 `[start, end)` */
@@ -107,7 +114,7 @@ export function fitToBudget(messages: Message[], budget: number): FittedContext 
 
   // 快路径：没超预算就原样返回。调用方靠 dropped === 0 判断「要不要警告」，
   // 所以这条路径必须一个字节都不动。
-  if (total <= budget) return { messages, dropped: 0, droppedTokens: 0 };
+  if (total <= budget) return { messages, dropped: 0, droppedTokens: 0, keptTokens: total };
 
   const groups = groupTurns(messages);
 
@@ -130,12 +137,13 @@ export function fitToBudget(messages: Message[], budget: number): FittedContext 
   }
 
   // 一组都没丢掉：要么本来就只剩一轮（没有什么可裁），要么超预算的是最后一组
-  if (dropped === 0) return { messages, dropped: 0, droppedTokens: 0 };
+  if (dropped === 0) return { messages, dropped: 0, droppedTokens: 0, keptTokens: total };
 
   // 丢掉的必然是 index 1 起、连续的一段 —— 分组从 index 1 开始且首尾相接
   return {
     messages: [messages[0], ...messages.slice(1 + dropped)],
     dropped,
     droppedTokens,
+    keptTokens: total - droppedTokens,
   };
 }
