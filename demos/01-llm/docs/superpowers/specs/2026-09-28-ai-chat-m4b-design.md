@@ -517,11 +517,13 @@ const MODEL_ALIASES: Record<string, string> = {
 // 空闲档 = 高峰档的一半（官方："空闲时段价格为高峰时段价格的一半"）
 const OFF_PEAK_RATIO = 0.5;
 
-// 节假日：两张私有表，日期键是**北京时间的 YYYY-MM-DD**。
-// 完整清单与来源见 §8。`HOLIDAYS` 缺了会让金额偏高，`MAKEUP_WORKDAYS`
-// 缺了会让金额偏低 —— 两张都不能省（D-M4b-4）。
-const HOLIDAYS: ReadonlySet<string>;
-const MAKEUP_WORKDAYS: ReadonlySet<string>;
+// 节假日：两张表，日期键是**北京时间的 YYYY-MM-DD**。完整清单与来源见 §8。
+// `HOLIDAYS` 缺了会让金额偏高，`MAKEUP_WORKDAYS` 缺了会让金额偏低 —— 两张都不能省。
+//
+// **导出**是为了让测试能钉住这份**手抄数据**（33 + 6 个日期，抄错一位
+// 就会让某一天的金额算错，而那种错没有任何其它迹象）。它们仍是只读的。
+export const HOLIDAYS: ReadonlySet<string>;
+export const MAKEUP_WORKDAYS: ReadonlySet<string>;
 ```
 
 **计价公式**：
