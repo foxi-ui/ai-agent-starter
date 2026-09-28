@@ -14,7 +14,13 @@ import {
   HOLIDAYS,
   MAKEUP_WORKDAYS,
   HOLIDAY_TABLE_YEAR,
+  priceFor,
+  costOf,
+  sumUsage,
+  UsageLedger,
+  type UsageEntry,
 } from '@/core/usage.ts';
+import type { TokenUsage } from '@/core/types.ts';
 
 // ── periodAt：工作日的高峰窗口 ─────────────────────────────────────────
 //
@@ -137,4 +143,279 @@ test('两张表不重叠', () => {
   for (const key of MAKEUP_WORKDAYS) {
     assert.equal(HOLIDAYS.has(key), false, `${key} 同时出现在两张表里`);
   }
+});
+
+// ── 单价与计价 ────────────────────────────────────────────────────────
+
+/** 造一份用量。默认全 0，避免每个用例都写全 6 个字段 */
+function usage(fields: Partial<TokenUsage> = {}): TokenUsage {
+  return {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cachedTokens: 0,
+    cacheMissTokens: 0,
+    reasoningTokens: 0,
+    ...fields,
+  };
+}
+
+/**
+ * 金额比较。
+ *
+ * 不用 assert.equal：costOf 内部是三个浮点数相加（10⁻³ 量级 ÷ 10⁶），
+ * 直接比会有 10⁻¹⁸ 级的表示误差。容差取 1e-9 —— 对 0.004 这个量级来说
+ * 足够宽松（能容忍浮点误差），又足够严格（任何真实的计价错误都远大于它）。
+ */
+function assertMoney(actual: number | null, expected: number): void {
+  assert.notEqual(actual, null, '期望有价目，实际得到 null');
+  assert.ok(
+    Math.abs((actual as number) - expected) < 1e-9,
+    `金额不符：实际 ${actual}，期望 ${expected}`,
+  );
+}
+
+test('priceFor 认两个正式模型', () => {
+  assert.deepEqual(priceFor('deepseek-flash'), {
+    cacheHit: 0.04,
+    cacheMiss: 2,
+    output: 8,
+  });
+  assert.deepEqual(priceFor('deepseek-v4-pro'), {
+    cacheHit: 0.30,
+    cacheMiss: 9,
+    output: 27,
+  });
+});
+
+test('priceFor 把退役旧名映射到 flash', () => {
+  // 服务端仍为这两个名字提供服务并按 Flash 计价
+  assert.deepEqual(priceFor('deepseek-v4-flash'), priceFor('deepseek-flash'));
+  assert.deepEqual(
+    priceFor('deepseek-v4-flash-vision-exp'),
+    priceFor('deepseek-flash'),
+  );
+});
+
+test('priceFor 对未知模型返回 null，不猜单价', () => {
+  // 猜一个单价会造出「看起来精确、实际错误」的数字，
+  // 而用户没有任何线索能看出它是猜的
+  assert.equal(priceFor('gpt-4'), null);
+  assert.equal(priceFor(''), null);
+});
+
+test('costOf：三档单价各自独立计入', () => {
+  // 走 flash 高峰价：cacheHit 0.04 / cacheMiss 2 / output 8（per 1M）
+  const cachedOnly = costOf(usage({ cachedTokens: 1_000_000 }), 'deepseek-flash', 'peak');
+  assertMoney(cachedOnly, 0.04);
+
+  const missOnly = costOf(usage({ cacheMissTokens: 1_000_000 }), 'deepseek-flash', 'peak');
+  assertMoney(missOnly, 2);
+
+  const outputOnly = costOf(usage({ completionTokens: 1_000_000 }), 'deepseek-flash', 'peak');
+  assertMoney(outputOnly, 8);
+});
+
+test('costOf：空闲档恰好是高峰档的一半', () => {
+  const u = usage({
+    cachedTokens: 500_000,
+    cacheMissTokens: 300_000,
+    completionTokens: 200_000,
+  });
+  const peak = costOf(u, 'deepseek-flash', 'peak') as number;
+  const off = costOf(u, 'deepseek-flash', 'offpeak') as number;
+  assertMoney(off, peak / 2);
+});
+
+test('costOf：命中缓存让输入便宜 50 倍', () => {
+  // 同样 100 万输入 token，全命中 vs 全未命中
+  const hit = costOf(usage({ cachedTokens: 1_000_000 }), 'deepseek-flash', 'peak') as number;
+  const miss = costOf(usage({ cacheMissTokens: 1_000_000 }), 'deepseek-flash', 'peak') as number;
+  // 0.04 vs 2 —— 正是 D-M4b-6 选择「分开存」的那个 50 倍
+  assertMoney(hit, 0.04);
+  assertMoney(miss, 2);
+});
+
+test('costOf：思考 token 已含在 completion 里，不重复计', () => {
+  // reasoningTokens 只是 completionTokens 的一个子集标记，不是额外的一档
+  const withReasoning = costOf(
+    usage({ completionTokens: 1_000_000, reasoningTokens: 800_000 }),
+    'deepseek-flash',
+    'peak',
+  );
+  const withoutReasoning = costOf(
+    usage({ completionTokens: 1_000_000 }),
+    'deepseek-flash',
+    'peak',
+  );
+  assertMoney(withReasoning, withoutReasoning as number);
+});
+
+test('costOf：全 0 用量得 0（不是 null）', () => {
+  // 「API 没给 usage」与「真的用了 0」是两回事：前者 llm 层会产出全 0，
+  // 那是一个真实可能的用量，照常计价
+  assertMoney(costOf(usage(), 'deepseek-flash', 'peak'), 0);
+});
+
+test('costOf：未知模型返回 null', () => {
+  assert.equal(costOf(usage({ completionTokens: 100 }), 'gpt-4', 'peak'), null);
+});
+
+test('sumUsage：逐字段相加', () => {
+  const a = usage({
+    promptTokens: 100,
+    completionTokens: 10,
+    totalTokens: 110,
+    cachedTokens: 60,
+    cacheMissTokens: 40,
+    reasoningTokens: 3,
+  });
+  const b = usage({
+    promptTokens: 200,
+    completionTokens: 20,
+    totalTokens: 220,
+    cachedTokens: 150,
+    cacheMissTokens: 50,
+    reasoningTokens: 7,
+  });
+  assert.deepEqual(sumUsage([a, b]), {
+    promptTokens: 300,
+    completionTokens: 30,
+    totalTokens: 330,
+    cachedTokens: 210,
+    cacheMissTokens: 90,
+    reasoningTokens: 10,
+  });
+});
+
+test('sumUsage：空数组返回全 0', () => {
+  assert.deepEqual(sumUsage([]), usage());
+});
+
+test('sumUsage：不修改入参', () => {
+  const a = usage({ promptTokens: 100 });
+  sumUsage([a]);
+  assert.equal(a.promptTokens, 100);
+});
+
+// ── UsageLedger ───────────────────────────────────────────────────────
+
+/** 造一条账本记录。默认走 flash + 周一北京 10:00（高峰） */
+function entry(fields: Partial<UsageEntry> = {}): UsageEntry {
+  return {
+    at: '2026-09-28T02:00:00.000Z', // 北京 10:00，周一 → 高峰
+    model: 'deepseek-flash',
+    usage: usage({ cachedTokens: 1_000_000 }),
+    estimatedPromptTokens: 0,
+    ...fields,
+  };
+}
+
+test('空账本：轮次 0、合计全 0、金额全 0', () => {
+  const ledger = new UsageLedger();
+  assert.equal(ledger.rounds, 0);
+  assert.deepEqual(ledger.list(), []);
+  assert.deepEqual(ledger.total(), usage());
+  assert.deepEqual(ledger.cost(), {
+    cny: 0,
+    peakCny: 0,
+    offPeakCny: 0,
+    unpricedModels: [],
+    pricedRounds: 0,
+  });
+});
+
+test('构造时可以铺入历史记录（--resume 用）', () => {
+  const ledger = new UsageLedger([entry(), entry()]);
+  assert.equal(ledger.rounds, 2);
+});
+
+test('record 累加，total 逐字段相加', () => {
+  const ledger = new UsageLedger();
+  ledger.record(entry({ usage: usage({ promptTokens: 100, cachedTokens: 100 }) }));
+  ledger.record(entry({ usage: usage({ promptTokens: 200, cachedTokens: 200 }) }));
+
+  assert.equal(ledger.rounds, 2);
+  assert.equal(ledger.total().promptTokens, 300);
+  assert.equal(ledger.total().cachedTokens, 300);
+});
+
+test('list() 返回深拷贝：改里面的 usage 影响不到账本', () => {
+  const ledger = new UsageLedger([entry({ usage: usage({ promptTokens: 100 }) })]);
+  const snapshot = ledger.list();
+  // 浅拷贝（[...entries]）挡不住这一句 —— UsageEntry.usage 是嵌套对象
+  snapshot[0].usage.promptTokens = 999;
+  snapshot[0].model = '改过了';
+
+  assert.equal(ledger.list()[0].usage.promptTokens, 100);
+  assert.equal(ledger.list()[0].model, 'deepseek-flash');
+});
+
+test('record 时也隔绝外部引用', () => {
+  const ledger = new UsageLedger();
+  const e = entry({ usage: usage({ promptTokens: 100 }) });
+  ledger.record(e);
+  e.usage.promptTokens = 999;
+  assert.equal(ledger.total().promptTokens, 100);
+});
+
+test('cost() 按每条记录**当时**的时段计价', () => {
+  const ledger = new UsageLedger([
+    // 周一北京 10:00 → 高峰
+    entry({
+      at: '2026-09-28T02:00:00.000Z',
+      usage: usage({ cacheMissTokens: 1_000_000 }),
+    }),
+    // 周一北京 13:00 → 午休，空闲
+    entry({
+      at: '2026-09-28T05:00:00.000Z',
+      usage: usage({ cacheMissTokens: 1_000_000 }),
+    }),
+  ]);
+
+  const cost = ledger.cost();
+  assertMoney(cost.peakCny, 2);    // 2 元/1M（高峰）
+  assertMoney(cost.offPeakCny, 1); // 1 元/1M（空闲 = 一半）
+  assertMoney(cost.cny, 3);
+  assert.equal(cost.pricedRounds, 2);
+});
+
+test('cost()：未定价模型单独列出，不混进合计', () => {
+  const ledger = new UsageLedger([
+    entry({ usage: usage({ cacheMissTokens: 1_000_000 }) }), // 2 元
+    entry({ model: 'gpt-4', usage: usage({ cacheMissTokens: 1_000_000 }) }),
+  ]);
+
+  const cost = ledger.cost();
+  // 关键：合计**只**含有价的那一条。把 null 当 0 会得到一个偏低
+  // 却仍然显示成完整数字的总额
+  assertMoney(cost.cny, 2);
+  assert.deepEqual(cost.unpricedModels, ['gpt-4']);
+  assert.equal(cost.pricedRounds, 1);
+});
+
+test('cost()：未定价模型去重且保持首次出现顺序', () => {
+  const ledger = new UsageLedger([
+    entry({ model: 'b-model' }),
+    entry({ model: 'a-model' }),
+    entry({ model: 'b-model' }),
+  ]);
+  assert.deepEqual(ledger.cost().unpricedModels, ['b-model', 'a-model']);
+});
+
+test('cost()：全部未定价时 cny 为 0 且列表非空', () => {
+  const ledger = new UsageLedger([entry({ model: 'unknown-1' })]);
+  const cost = ledger.cost();
+  assert.equal(cost.cny, 0);
+  assert.deepEqual(cost.unpricedModels, ['unknown-1']);
+  assert.equal(cost.pricedRounds, 0);
+});
+
+test('cost()：at 是坏字符串时按高峰计，不抛错', () => {
+  // new Date('坏值').toISOString() 会抛 RangeError —— 一个统计函数
+  // 不该因为一行被人手改坏的日志而崩
+  const ledger = new UsageLedger([
+    entry({ at: '不是日期', usage: usage({ cacheMissTokens: 1_000_000 }) }),
+  ]);
+  assertMoney(ledger.cost().cny, 2); // 高峰价
 });

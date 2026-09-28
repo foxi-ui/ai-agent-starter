@@ -142,3 +142,231 @@ export function isOutsideHolidayTable(at: Date): boolean {
   if (parts === null) return false;
   return Number(parts.key.slice(0, 4)) !== HOLIDAY_TABLE_YEAR;
 }
+
+/** 一个模型的单位价（人民币元 / 百万 token） */
+export interface ModelPrice {
+  cacheHit: number;
+  cacheMiss: number;
+  output: number;
+}
+
+/**
+ * 高峰档单价，人民币元 / 百万 token。
+ *
+ * 数值来源：`docs/deepseek-api-facts.md`（官方页面 2026-09-28 抓取）。
+ * **官方只以人民币计价**，这里不存美元换算值 —— 两个币种并存正是
+ * 「混用口径」那个坑的形状。
+ *
+ * ⚠️ **改动此表必须同步改 `docs/deepseek-api-facts.md`**：
+ * `test/pricing.test.ts` 会逐项比对两者，改一处而漏另一处会红。
+ */
+const PEAK_PRICES: Record<string, ModelPrice> = {
+  'deepseek-flash': { cacheHit: 0.04, cacheMiss: 2, output: 8 },
+  'deepseek-v4-pro': { cacheHit: 0.30, cacheMiss: 9, output: 27 },
+};
+
+/**
+ * 退役旧名 → 现名。服务端仍为它们提供服务并按 Flash 计价
+ * （见 `docs/deepseek-api-facts.md`「模型」一节）。
+ */
+const MODEL_ALIASES: Record<string, string> = {
+  'deepseek-v4-flash': 'deepseek-flash',
+  'deepseek-v4-flash-vision-exp': 'deepseek-flash',
+};
+
+/** 空闲档 = 高峰档的一半（官方：「空闲时段价格为高峰时段价格的一半」） */
+const OFF_PEAK_RATIO = 0.5;
+
+/**
+ * 查一个模型的单位价（**高峰档**）。
+ *
+ * 无价目返回 `null` —— **绝不猜单价**。`/model <name>` 不校验模型名，
+ * 所以账本里完全可能出现一个没有价目的名字；猜出来的数字看起来精确、
+ * 实际错误，而用户没有任何线索能看出它是猜的（D-M4b-5）。
+ */
+export function priceFor(model: string): ModelPrice | null {
+  const name = MODEL_ALIASES[model] ?? model;
+  return PEAK_PRICES[name] ?? null;
+}
+
+/**
+ * 算一轮请求的金额（人民币元）；无价目返回 `null`。
+ *
+ * 三档分开计：命中的输入便宜 50 倍，把它们合并成一个 promptTokens
+ * 就再也还原不出金额（D-M4b-6）。
+ *
+ * `completionTokens` **已含** `reasoningTokens`（官方 usage 里前者是总数、
+ * 后者是其中的子集），所以只按 completionTokens 计一次，不重复。
+ *
+ * @param period 该轮所处的档位，由 `periodAt(entry.at)` 得出
+ */
+export function costOf(
+  usage: TokenUsage,
+  model: string,
+  period: PricingPeriod,
+): number | null {
+  const price = priceFor(model);
+  if (price === null) return null;
+
+  const ratio = period === 'peak' ? 1 : OFF_PEAK_RATIO;
+  return (
+    (usage.cachedTokens / 1e6) * price.cacheHit * ratio +
+    (usage.cacheMissTokens / 1e6) * price.cacheMiss * ratio +
+    (usage.completionTokens / 1e6) * price.output * ratio
+  );
+}
+
+/**
+ * 逐字段相加。
+ *
+ * 不用 `reduce` 叠对象展开：那样每次迭代都新建一个对象，账本长起来之后
+ * 是 O(n) 次分配。这里原地累加一个累加器即可。
+ */
+export function sumUsage(usages: readonly TokenUsage[]): TokenUsage {
+  const total: TokenUsage = {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cachedTokens: 0,
+    cacheMissTokens: 0,
+    reasoningTokens: 0,
+  };
+
+  for (const u of usages) {
+    total.promptTokens += u.promptTokens;
+    total.completionTokens += u.completionTokens;
+    total.totalTokens += u.totalTokens;
+    total.cachedTokens += u.cachedTokens;
+    total.cacheMissTokens += u.cacheMissTokens;
+    total.reasoningTokens += u.reasoningTokens;
+  }
+
+  return total;
+}
+
+/**
+ * 账本里的一条记录：一轮成功请求。
+ *
+ * 它同时是 JSONL 里 `{ type: 'usage' }` 记录的载荷，所以字段一旦写下
+ * 就不能改（旧文件补不回来）。
+ */
+export interface UsageEntry {
+  /**
+   * 记账时刻（ISO 8601）。
+   *
+   * **金额按它来分峰谷**，所以它必须在写记录的那一刻定格并持久化 ——
+   * 账本里会同时躺着昨天高峰和今天空闲的记录，用「现在」统一计价
+   * 会把其中一半算错，而事后无法回溯补全（D-M4b-13）。
+   */
+  at: string;
+  /** 该轮实际使用的模型（可能是 /model 切换后的） */
+  model: string;
+  usage: TokenUsage;
+  /**
+   * 该轮**实际发出去的消息数组**的估算 token 数（M4a 的 estimateTokens 之和，
+   * 即 fitToBudget 之后的 keptTokens）。
+   *
+   * 用于与真实 promptTokens 对比，检验 D-M4a-1 的除数 1.5 是否真的偏保守。
+   * 注意它必须是**裁剪后**的估算 —— 用完整历史的估算会得到一个虚高的偏差。
+   */
+  estimatedPromptTokens: number;
+}
+
+/** 账本的合计结果 */
+export interface CostBreakdown {
+  /** 有价目部分的金额合计（人民币元）。全部无价目时为 0 */
+  cny: number;
+  /** 有价目部分里，高峰档的金额 */
+  peakCny: number;
+  /** 有价目部分里，空闲档的金额 */
+  offPeakCny: number;
+  /** 账本里出现过的、无价目表的模型名（去重，保持首次出现顺序） */
+  unpricedModels: string[];
+  /** 有价目的轮次数 */
+  pricedRounds: number;
+}
+
+/** 深拷贝一条记录。`usage` 是嵌套对象，浅展开挡不住穿透写 */
+function cloneEntry(entry: UsageEntry): UsageEntry {
+  return { ...entry, usage: { ...entry.usage } };
+}
+
+/**
+ * 进程内的用量账本。
+ *
+ * **只管内存状态**：落盘由 `cli/repl.ts` 负责（它拿到 entry 后自己调
+ * `store.append`）。之所以不给它加 `onChange` 广播（`Session` 是那样做的），
+ * 是因为那个机制解决的是「**看不见的写入点**」—— `/clear` 与 `/model` 是
+ * `executeCommand` 内部改的状态，`repl` 看不见。而 `record()` 只有一个调用点，
+ * 就在 `repl` 的循环里、紧挨着落盘那几行（D-M4b-16）。
+ */
+export class UsageLedger {
+  private entries: UsageEntry[] = [];
+
+  /** @param initial 从 JSONL 回放出的历史记录；新会话传空数组 */
+  constructor(initial: UsageEntry[] = []) {
+    this.entries = initial.map(cloneEntry);
+  }
+
+  /** 记一轮。只应由 repl 在**成功**轮次调用 */
+  record(entry: UsageEntry): void {
+    this.entries.push(cloneEntry(entry));
+  }
+
+  /**
+   * 记录列表的**深拷贝**，外部改不动内部状态。
+   *
+   * 必须是深拷贝而不是 `[...entries]`：`UsageEntry.usage` 是嵌套对象，
+   * 浅拷贝下调用方一句 `list[0].usage.promptTokens = 0` 就穿透进来改了账本。
+   * 与 `Session.history()` 的处置同理（那里 Message 是扁平的，才只需一层展开）。
+   */
+  list(): UsageEntry[] {
+    return this.entries.map(cloneEntry);
+  }
+
+  /** 全部记录的字段级合计 */
+  total(): TokenUsage {
+    return sumUsage(this.entries.map((e) => e.usage));
+  }
+
+  /**
+   * 金额合计、峰谷拆分与未定价模型。
+   *
+   * 逐条用 `entry.at` 判断档位 —— 不是用「现在」。
+   */
+  cost(): CostBreakdown {
+    let cny = 0;
+    let peakCny = 0;
+    let offPeakCny = 0;
+    let pricedRounds = 0;
+    const unpricedModels: string[] = [];
+
+    for (const entry of this.entries) {
+      const period = periodAt(new Date(entry.at));
+      const amount = costOf(entry.usage, entry.model, period);
+
+      if (amount === null) {
+        // 不把 null 当 0 混进合计 —— 那会让总额偏低却显示成完整数字
+        if (!unpricedModels.includes(entry.model)) {
+          unpricedModels.push(entry.model);
+        }
+        continue;
+      }
+
+      pricedRounds += 1;
+      cny += amount;
+      if (period === 'peak') {
+        peakCny += amount;
+      } else {
+        offPeakCny += amount;
+      }
+    }
+
+    return { cny, peakCny, offPeakCny, unpricedModels, pricedRounds };
+  }
+
+  /** 轮次数 */
+  get rounds(): number {
+    return this.entries.length;
+  }
+}
