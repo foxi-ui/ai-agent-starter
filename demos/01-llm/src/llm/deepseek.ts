@@ -5,7 +5,14 @@
 // 保持安静，才能在测试里被反复调用而不产生多余输出。
 
 import type { LLMClient, LLMClientConfig } from '@/llm/client.ts';
-import type { ChatOptions, Message, ChatResult, FinishReason, StreamEvent } from '@/core/types.ts';
+import type {
+  ChatOptions,
+  Message,
+  ChatResult,
+  FinishReason,
+  StreamEvent,
+  TokenUsage,
+} from '@/core/types.ts';
 import { parseSse } from '@/llm/sse.ts';
 
 /**
@@ -61,6 +68,70 @@ function readWithIdleTimeout(
  */
 function thinkingField(options?: ChatOptions): { thinking?: { type: 'disabled' } } {
   return options?.thinking === false ? { thinking: { type: 'disabled' } } : {};
+}
+
+/** 数字字段的防御式读取：不是有限数就取 0 */
+function num(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * 把 API 的 usage 对象归一化成 TokenUsage。
+ *
+ * **永不抛错**：任何字段缺失、类型不对、整个对象不存在，都退回 0 ——
+ * 统计拿不到不该毁掉一轮对话。
+ *
+ * 字段名取**防御式策略**：官方未文档化 `prompt_tokens_details` 的确切形状
+ * （见 `docs/deepseek-api-facts.md` 末尾「官方未给出错误响应体的字段名，
+ * 解析须防御式处理」），所以两个候选名都试：
+ *
+ * - 命中：`prompt_cache_hit_tokens` → `cached_tokens` → 0
+ * - 未命中：`prompt_cache_miss_tokens` → `promptTokens - 命中` → 0
+ * - 总数：`total_tokens` → `promptTokens + completionTokens`
+ *
+ * 未命中那一档要取 `Math.max(0, …)`：上游若给出「命中数 > 输入总数」，
+ * 相减会得到负数，而负金额比金额偏差难查得多。
+ */
+function toTokenUsage(raw: unknown): TokenUsage {
+  const source = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+
+  const promptTokens = num(source.prompt_tokens);
+  const completionTokens = num(source.completion_tokens);
+
+  const promptDetails = (
+    typeof source.prompt_tokens_details === 'object' && source.prompt_tokens_details !== null
+      ? source.prompt_tokens_details
+      : {}
+  ) as Record<string, unknown>;
+
+  const cachedTokens =
+    promptDetails.prompt_cache_hit_tokens !== undefined
+      ? num(promptDetails.prompt_cache_hit_tokens)
+      : num(promptDetails.cached_tokens);
+
+  const cacheMissTokens =
+    promptDetails.prompt_cache_miss_tokens !== undefined
+      ? num(promptDetails.prompt_cache_miss_tokens)
+      : Math.max(0, promptTokens - cachedTokens);
+
+  const completionDetails = (
+    typeof source.completion_tokens_details === 'object' &&
+    source.completion_tokens_details !== null
+      ? source.completion_tokens_details
+      : {}
+  ) as Record<string, unknown>;
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens:
+      source.total_tokens !== undefined
+        ? num(source.total_tokens)
+        : promptTokens + completionTokens,
+    cachedTokens,
+    cacheMissTokens,
+    reasoningTokens: num(completionDetails.reasoning_tokens),
+  };
 }
 
 /**
@@ -124,6 +195,7 @@ export function createDeepSeekClient(
       // 这里故意只声明我们真正要用的字段
       const data = (await response.json()) as {
         choices: Array<{ message?: { content?: string } }>;
+        usage?: unknown;
       };
       // 逐层可选链 + 兜底空串：任何一层缺失都返回 ''，而不是抛错。
       // 否则一个空回答就能让整个 REPL 崩掉。
@@ -133,7 +205,10 @@ export function createDeepSeekClient(
       // 写一行 `[思考中…]` 指示；两条路径都不打印思考正文、也都不把它放进后续上下文。
       // 见 DECISIONS D22。
       const content = data.choices[0]?.message?.content ?? '';
-      return { content };
+      // 「没拿到」与「真的是 0」是两回事：API 没给 usage 时保持 undefined，
+      // 由调用方决定怎么显示（见 core/types.ts 的 ChatResult）
+      const usage = data.usage === undefined ? undefined : toTokenUsage(data.usage);
+      return { content, usage };
     },
 
     async *chatStream(
@@ -143,9 +218,10 @@ export function createDeepSeekClient(
       const response = await fetch(url, {
         method: 'POST',
         headers,
-        // 只发三个必填字段（+ 可选的 thinking）。不发 stream_options ——
+        // 只发三个必填字段（+ 可选的 thinking）。**仍然不发 stream_options** ——
         // 官方文档没有要求流式必须带它（依赖方向相反：单独传 stream_options 才 400），
-        // 而 usage 要到 M4b 才有消费者，现在发了没有收益。
+        // 且官方口径是不传它时 usage 也出现在最后一个 chunk 上，
+        // 所以 M4b 有了消费者之后也没有理由加（这一条由 Task 12 的冒烟实测确认）。
         body: JSON.stringify({
           model: options?.model ?? config.model,
           messages,
@@ -206,6 +282,7 @@ export function createDeepSeekClient(
                 delta?: { content?: string | null; reasoning_content?: string | null };
                 finish_reason?: string | null;
               }>;
+              usage?: unknown;
             };
             try {
               payload = JSON.parse(event.data);
@@ -218,12 +295,19 @@ export function createDeepSeekClient(
             const delta = choice?.delta;
 
             // 同一个 chunk 可能同时带内容和 finish_reason，所以逐个字段判定，
-            // 不是 switch 整个 chunk。顺序也要紧：先正文后 done。
+            // 不是 switch 整个 chunk。顺序也要紧：正文 → **usage** → done。
+            //
+            // usage 必须在 done 之前：done 是终止信号，消费者见到它可能 break，
+            // 之后 yield 的就永远拿不到了。真实响应里两者在同一个末 chunk 上，
+            // 所以这个顺序不是理论问题（D-M4b-2）。
             if (delta?.reasoning_content) {
               yield { type: 'reasoning-delta', text: delta.reasoning_content };
             }
             if (delta?.content) {
               yield { type: 'text-delta', text: delta.content };
+            }
+            if (payload.usage !== undefined) {
+              yield { type: 'usage', usage: toTokenUsage(payload.usage) };
             }
             if (choice?.finish_reason && !doneEmitted) {
               doneEmitted = true;

@@ -59,7 +59,8 @@ test('成功时返回 content，抑制 reasoning_content', async () => {
 
   const client = createDeepSeekClient(config);
   const result = await client.chat([{ role: 'user', content: 'hi' }]);
-  assert.deepEqual(result, { content: '最终回答' });
+  // 响应里没有 usage 字段 → ChatResult.usage 是 undefined（见 M4b 的契约）
+  assert.deepEqual(result, { content: '最终回答', usage: undefined });
 });
 
 test('非 2xx 抛出错误', async () => {
@@ -78,7 +79,7 @@ test('content 缺失时返回空串不崩溃', async () => {
   mockFetch(async () => jsonResponse({ choices: [{}] }));
   const client = createDeepSeekClient(config);
   const result = await client.chat([{ role: 'user', content: 'hi' }]);
-  assert.deepEqual(result, { content: '' });
+  assert.deepEqual(result, { content: '', usage: undefined });
 });
 
 test('fetch 抛错时向上冒泡，不被吞掉', async () => {
@@ -317,7 +318,11 @@ test('chatStream 把 delta 归一化成事件序列', async () => {
   ]);
 });
 
-test('末 chunk 的 usage 被忽略，不产生事件也不报错', async () => {
+test('末 chunk 的 usage 产出事件，且 [DONE] 不会让它重复或丢失', async () => {
+  // **这条在 M4b 反转了 M2 时代的断言**（见 DECISIONS D18）：当时 usage 没有消费者，
+  // 所以钉的是「被忽略」；现在它是 StreamEvent 的第四个变体（D-M4b-1）。
+  // 保留原有的 `[DONE]` 尾巴，因为它才是真实响应的形状 —— 若实现把 usage
+  // 挂在 done 分支里，多出来的这个收尾标记会暴露成缺失或重复。
   mockFetch(async () =>
     sseResponse([
       enc.encode(
@@ -334,6 +339,17 @@ test('末 chunk 的 usage 被忽略，不产生事件也不报错', async () => 
   const client = createDeepSeekClient(config);
   assert.deepEqual(await collect(client.chatStream([{ role: 'user', content: 'hi' }])), [
     { type: 'text-delta', text: '答' },
+    {
+      type: 'usage',
+      usage: {
+        promptTokens: 10,
+        completionTokens: 2,
+        totalTokens: 12,
+        cachedTokens: 0,
+        cacheMissTokens: 10,
+        reasoningTokens: 0,
+      },
+    },
     { type: 'done', reason: 'stop' },
   ]);
 });
@@ -526,4 +542,213 @@ test('调用方提前退出消费时，底层流被 cancel', async () => {
   // for await 的 break 会 await 生成器的 return()，也就是 await 过 finally，
   // 所以这里不需要再等一个 tick
   assert.equal(canceled, true);
+});
+
+// ── usage 解析（M4b） ─────────────────────────────────────────────────
+
+/** 末 chunk：同时带 finish_reason 与 usage（真实响应就是这么长的） */
+function finalChunkWithUsage(usage: Record<string, unknown>) {
+  return {
+    choices: [{ delta: {}, finish_reason: 'stop' }],
+    usage,
+  };
+}
+
+/** 一份完整的官方 usage 形状 */
+const fullUsage = {
+  prompt_tokens: 1203,
+  completion_tokens: 456,
+  total_tokens: 1659,
+  prompt_tokens_details: {
+    prompt_cache_hit_tokens: 1024,
+    prompt_cache_miss_tokens: 179,
+  },
+  completion_tokens_details: { reasoning_tokens: 120 },
+};
+
+test('流式：末 chunk 的 usage 产出 usage 事件，且排在 done 之前', async () => {
+  mockFetch(async () =>
+    sseResponse([
+      enc.encode(sseChunk(deltaChunk({ content: '你好' }))),
+      enc.encode(sseChunk(finalChunkWithUsage(fullUsage))),
+    ]),
+  );
+
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+
+  // **断言整个序列**，不是分别断言「有 usage」「有 done」——
+  // 后者在顺序反了的时候照样通过，而顺序正是契约（D-M4b-2）：
+  // 消费者见到 done 可能 break，usage 必须在它之前到手
+  assert.deepEqual(
+    events.map((e) => e.type),
+    ['text-delta', 'usage', 'done'],
+  );
+  assert.deepEqual(events[1], {
+    type: 'usage',
+    usage: {
+      promptTokens: 1203,
+      completionTokens: 456,
+      totalTokens: 1659,
+      cachedTokens: 1024,
+      cacheMissTokens: 179,
+      reasoningTokens: 120,
+    },
+  });
+});
+
+test('流式：usage 与 done 在同一个 chunk 上也保持 usage 在前', async () => {
+  // 真实响应里两者就长在一起 —— 这个用例才是常态
+  mockFetch(async () =>
+    sseResponse([enc.encode(sseChunk(finalChunkWithUsage(fullUsage)))]),
+  );
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  assert.deepEqual(events.map((e) => e.type), ['usage', 'done']);
+});
+
+test('流式：响应没有 usage 时不产出 usage 事件', async () => {
+  mockFetch(async () =>
+    sseResponse([
+      enc.encode(sseChunk(deltaChunk({ content: '你好' }))),
+      enc.encode(sseChunk(deltaChunk({}, 'stop'))),
+    ]),
+  );
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  assert.deepEqual(events.map((e) => e.type), ['text-delta', 'done']);
+});
+
+test('流式：usage 字段缺失时全部填 0，不抛错', async () => {
+  mockFetch(async () => sseResponse([enc.encode(sseChunk(finalChunkWithUsage({})))]));
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  const usageEvent = events.find((e) => e.type === 'usage');
+  assert.ok(usageEvent);
+  assert.deepEqual(usageEvent.usage, {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cachedTokens: 0,
+    cacheMissTokens: 0,
+    reasoningTokens: 0,
+  });
+});
+
+test('流式：只有 cached_tokens（没有 prompt_cache_hit_tokens）时回落', async () => {
+  mockFetch(async () =>
+    sseResponse([
+      enc.encode(
+        sseChunk(
+          finalChunkWithUsage({
+            prompt_tokens: 1000,
+            completion_tokens: 10,
+            total_tokens: 1010,
+            prompt_tokens_details: { cached_tokens: 800 },
+          }),
+        ),
+      ),
+    ]),
+  );
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  const usageEvent = events.find((e) => e.type === 'usage');
+  assert.ok(usageEvent);
+  assert.equal(usageEvent.usage.cachedTokens, 800);
+  // 未命中由 prompt_tokens - 命中 推出
+  assert.equal(usageEvent.usage.cacheMissTokens, 200);
+});
+
+test('流式：命中数大于输入总数时，未命中不为负', async () => {
+  mockFetch(async () =>
+    sseResponse([
+      enc.encode(
+        sseChunk(
+          finalChunkWithUsage({
+            prompt_tokens: 100,
+            prompt_tokens_details: { prompt_cache_hit_tokens: 500 },
+          }),
+        ),
+      ),
+    ]),
+  );
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  const usageEvent = events.find((e) => e.type === 'usage');
+  assert.ok(usageEvent);
+  // 负金额比金额偏差难查得多
+  assert.equal(usageEvent.usage.cacheMissTokens, 0);
+});
+
+test('流式：total_tokens 缺失时由输入 + 输出补齐', async () => {
+  mockFetch(async () =>
+    sseResponse([
+      enc.encode(
+        sseChunk(
+          finalChunkWithUsage({ prompt_tokens: 100, completion_tokens: 20 }),
+        ),
+      ),
+    ]),
+  );
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  const usageEvent = events.find((e) => e.type === 'usage');
+  assert.ok(usageEvent);
+  assert.equal(usageEvent.usage.totalTokens, 120);
+});
+
+test('流式：usage 字段类型不对（字符串）时全部填 0，不抛错', async () => {
+  mockFetch(async () => sseResponse([enc.encode(sseChunk(finalChunkWithUsage('nope' as never)))]));
+  const client = createDeepSeekClient(config);
+  const events = await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  const usageEvent = events.find((e) => e.type === 'usage');
+  assert.ok(usageEvent);
+  assert.equal(usageEvent.usage.promptTokens, 0);
+});
+
+test('流式：请求体不带 stream_options', async () => {
+  // 官方口径：不传它时 usage 也出现在最后一个 chunk 上。
+  // 这条钉住「最小请求体」原则，也是本设计唯一待实测验证的前提
+  let capturedInit: Parameters<typeof fetch>[1] | undefined;
+  mockFetch(async (_url, init) => {
+    capturedInit = init;
+    return sseResponse([enc.encode(sseChunk(finalChunkWithUsage(fullUsage)))]);
+  });
+  const client = createDeepSeekClient(config);
+  await collect(client.chatStream([{ role: 'user', content: 'hi' }]));
+  const body = JSON.parse(String(capturedInit!.body));
+  assert.equal(body.stream_options, undefined);
+});
+
+// ── 非流式路径的 usage ────────────────────────────────────────────────
+
+test('chat()：解析 usage', async () => {
+  mockFetch(async () =>
+    jsonResponse({
+      choices: [{ message: { role: 'assistant', content: '你好' } }],
+      usage: fullUsage,
+    }),
+  );
+  const client = createDeepSeekClient(config);
+  const result = await client.chat([{ role: 'user', content: 'hi' }]);
+
+  assert.equal(result.content, '你好');
+  assert.deepEqual(result.usage, {
+    promptTokens: 1203,
+    completionTokens: 456,
+    totalTokens: 1659,
+    cachedTokens: 1024,
+    cacheMissTokens: 179,
+    reasoningTokens: 120,
+  });
+});
+
+test('chat()：响应没有 usage 时是 undefined（不是全 0）', async () => {
+  // 「没拿到」与「真的是 0」是两回事，契约里写的是 undefined
+  mockFetch(async () =>
+    jsonResponse({ choices: [{ message: { role: 'assistant', content: '你好' } }] }),
+  );
+  const client = createDeepSeekClient(config);
+  const result = await client.chat([{ role: 'user', content: 'hi' }]);
+  assert.equal(result.usage, undefined);
 });
